@@ -1,8 +1,9 @@
 # Builds openOMSI for Windows and Linux (x64, ARM64), macOS (Apple silicon, Intel) and Android
-# (plus the dedicated server for Linux and Windows) when a maintainer runs it from main
+# (plus the dedicated server for Linux and Windows) when a maintainer runs it by hand
 # (Actions -> Release -> Run workflow) and publishes them as the beta (pre-release)
 # v<MAJOR.MINOR.PATCH>; promote.yml makes a tested beta the stable release. A push to main
-# builds every platform and publishes nothing. See docs/VERSIONING.md.
+# builds every platform and publishes nothing. Other branches publish uniquely named
+# branch pre-releases. See docs/VERSIONING.md.
 # Pull requests build Windows x64, macOS (Apple silicon), Linux x64 and Android, without publishing;
 # the label ci:all-platforms builds all seven (from the next push or run).
 name: Release
@@ -49,7 +50,18 @@ jobs:
       - id: v
         env:
           PR: ${{ github.event.pull_request.number }}
-        run: echo "version=$(sh scripts/version.sh)${PR:+-pr$PR}" >> "$GITHUB_OUTPUT"
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BRANCH: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          version="$(sh scripts/version.sh)${PR:+-pr$PR}"
+          if [ "$EVENT" = workflow_dispatch ] && [ "$REF" != refs/heads/main ]; then
+            slug=$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//' | cut -c1-40)
+            version="$version-branch-${slug:-branch}.$RUN_NUMBER.$RUN_ATTEMPT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - env:
           VERSION: ${{ steps.v.outputs.version }}
         run: echo "### openOMSI $VERSION" >> "$GITHUB_STEP_SUMMARY"
@@ -380,7 +392,7 @@ jobs:
 
   release:
     # (the platforms not built again are skipped, not failed)
-    if: ${{ !cancelled() && !failure() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ !cancelled() && !failure() && github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/') }}
     needs: [version, windows, windows-tests, macos, linux, android]
     runs-on: ubuntu-latest
     permissions:
@@ -406,22 +418,25 @@ jobs:
             echo "::error::v$VERSION is already published and stays as it is: a fix is released as a new version"
             exit 1
           fi
-          prev=$(git tag -l "v${VERSION%.*}.*" --sort=-v:refname | grep -vx "v$VERSION" | head -1)
-          if [ -n "$prev" ] && ! git merge-base --is-ancestor "$prev" "$GITHUB_SHA"; then
-            echo "::error::$GITHUB_SHA is older than $prev: only a newer commit of main is released"
-            exit 1
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            prev=$(git tag -l "v${VERSION%.*}.*" --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vx "v$VERSION" | head -1 || true)
+            if [ -n "$prev" ] && ! git merge-base --is-ancestor "$prev" "$GITHUB_SHA"; then
+              echo "::error::$GITHUB_SHA is older than $prev: only a newer commit of main is released"
+              exit 1
+            fi
           fi
-          if ! git tag "v$VERSION" "$GITHUB_SHA" 2>/dev/null && [ "$(git rev-parse "v$VERSION^{commit}")" != "$GITHUB_SHA" ]; then
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null && [ "$(git rev-parse "v$VERSION^{commit}")" != "$GITHUB_SHA" ]; then
             echo "::error::the tag v$VERSION already names another commit"
             exit 1
           fi
-          git push origin "v$VERSION"
+          # Let the Release API create the tag on this exact commit. Pushing a new tag
+          # with GITHUB_TOKEN can require workflows permission for branch-only workflows.
           sh scripts/release-notes.sh "$VERSION" > notes.md
           cd out
           files=$(ls *.zip *.apk *.dmg *.exe 2>/dev/null || true)
           sha256sum $files > SHA256SUMS
           gh release create "v$VERSION" $files SHA256SUMS \
-            --verify-tag \
+            --target "$GITHUB_SHA" \
             --prerelease \
             --title "openOMSI $VERSION" \
             --notes-file ../notes.md

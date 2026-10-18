@@ -60,10 +60,20 @@ Release → Run workflow** from `main` (or `gh workflow run release.yml --ref ma
    release notes from this version's section of `CHANGELOG.md`
    ([`scripts/release-notes.sh`](../scripts/release-notes.sh)).
 
+### Branch pre-releases
+
+Manual runs on other branches also publish pre-releases. Their version is
+`<version>-branch-<branch-slug>.<run-number>.<run-attempt>`, for example
+`0.3.38-branch-plugin-improvements.123.1`. Select the branch under **Use workflow from**
+in **Actions → Release → Run workflow**, then choose the platforms as usual. Branch
+names are normalized and shortened for filenames; the run number keeps releases distinct.
+These tags do not advance the numbered `main` releases and cannot be promoted by
+`promote.yml`. The release targets the selected commit through GitHub's Release API;
+it does not push tags through Git, which can require an additional workflow permission.
+
 ### Stable: promoting a tested beta
 
-Only betas of `main` are published (a workflow run on another branch builds without
-publishing). When a beta has been tested and nothing blocks it (about once a week, sooner for an urgent
+When a beta of `main` has been tested and nothing blocks it (about once a week, sooner for an urgent
 fix), a maintainer runs **Actions → Promote a beta → Run workflow** from `main` with its version
 ([`.github/workflows/promote.yml`](../.github/workflows/promote.yml)). The beta becomes the
 stable release as it is: the same tag, the same files, the same SHA-256 - nothing is built
@@ -76,7 +86,8 @@ can be promoted. The workflow runs from `main` only and reads `release/health.js
 ### A published release never changes
 
 A version is published once. The release job refuses to publish a version that already
-exists, whose tag names another commit, or whose commit is older than the last release; it
+exists or whose tag names another commit; numbered `main` releases also require the commit
+to descend from the previous numbered release. It
 never moves a tag nor replaces a file. A release's tag is never deleted either: the next
 version is counted from the tags. A mistake in a release is fixed by a new commit, hence a
 new version. With the repository's
