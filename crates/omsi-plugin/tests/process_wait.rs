@@ -393,4 +393,3 @@ fn callback_cost() {
         p.finalize();
     }
 }
-
