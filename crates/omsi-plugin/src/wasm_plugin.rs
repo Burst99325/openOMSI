@@ -133,6 +133,7 @@ impl WasmHost {
         let owner = crate::lua::next_owner();
         let mut state = PluginState::new(&spec.name, "WASM plugin", "wasm", owner, hub, spec.folder.clone(), spec.data_dir.clone());
         state.perms = spec.perms.clone();
+        state.process_allowed = state.hub.process_grants.allows(path);
         let binding = WasmBinding { module: RefCell::new(module), raw: Cell::new(None), pending: RefCell::new(VecDeque::new()) };
         let mut p = WasmHost { name: spec.name.clone(), path: path.to_path_buf(), binding: Box::new(binding), state: Box::new(state), disabled: false };
         let r = p.with_ctx(io, |ctx, b| {

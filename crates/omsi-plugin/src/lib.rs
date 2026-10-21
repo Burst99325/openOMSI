@@ -1072,6 +1072,10 @@ impl Plugins {
     /// Load the plugins of each `plugins` folder given (the first folder's copy of an
     /// `.opl` name wins).
     pub fn load(dirs: &[PathBuf], hosts: &HostConfig) -> Plugins {
+        Self::load_with_process_grants(dirs, hosts, api::process::ProcessGrants::from_env())
+    }
+
+    pub fn load_with_process_grants(dirs: &[PathBuf], hosts: &HostConfig, process_grants: api::process::ProcessGrants) -> Plugins {
         let mut loaded: Vec<Plugin> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for dir in dirs {
@@ -1090,7 +1094,7 @@ impl Plugins {
             }
         }
         let mut lua = Vec::new();
-        let hub = api::runtime::SharedHub::default();
+        let hub = std::rc::Rc::new(api::runtime::Hub { process_grants, ..Default::default() });
         let ui = hub.ui.clone();
         let mut seen = std::collections::HashSet::new();
         for dir in dirs {

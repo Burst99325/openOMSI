@@ -479,7 +479,15 @@ only to ports from 1024 up. It holds at most 256 MB of memory.
 Every function and event, as the game's API registry describes them (also as JSON in
 [`plugin-api.json`](plugin-api.json), for tools and other plugin languages). `[x]` is an
 optional argument; a permission is what a plugin packed with a list of permissions must have
-declared to call the function (a plain `.lua` file has them all).
+declared to call the function (a plain `.lua` file has all except native process access, which always requires player opt-in).
+
+### Native helper programs
+
+Native process access is disabled by default, including for plain Lua files. Before starting the game, set `OMSI_PLUGIN_PROCESS_ALLOW` to exact absolute plugin entry-file paths, separated by `;` on Windows or `:` on Unix. Directories, wildcards, relative paths and missing files grant nothing. PowerShell example: `$env:OMSI_PLUGIN_PROCESS_ALLOW = 'D:\Plugins\trusted.lua'`. Remove the variable and restart to revoke consent. Embedded hosts can supply `ProcessGrants` through `Plugins::load_with_process_grants`.
+
+Packaged `.oop` plugins also need `process` in their declared permissions. A declaration alone never grants execution. This enables native execution with the game account's permissions, inherited environment and access outside the plugin sandbox. Approve only trusted code. Consent follows the canonical entry-file path: updates or replacements at that path retain consent. Descendant processes are not tracked or terminated automatically.
+
+`process.start` returns a plugin-owned handle; `status` and `exit_code` poll without blocking. Lua `process.wait` suspends the top-level callback while the game and other plugins continue. Nested event callbacks and manual coroutines cannot wait. Stop, disable and reload cancel pending waits and terminate direct children. Completed handles retain status until `forget`; the limit is 32 handles per plugin. Plugins without consent keep direct callback dispatch; approved Lua plugins reuse completed callback coroutines.
 
 <!-- api:begin (written from the registry: OMSI_API_BLESS=1 cargo test -p omsi-plugin api_manifest) -->
 
@@ -750,7 +758,7 @@ declared to call the function (a plain `.lua` file has them all).
 | `omsi.plugin.files([dir])` | list of tables | The files of the plugin's own folder (or a folder in it): `{name, dir, size}`. | 0.2.22 |
 | `omsi.plugin.list()` | list of strings | The names of the plugins loaded, this one too. | 0.2.22 |
 | `omsi.plugin.name()` | string | The plugin's name: its file's, or its folder's for a `main.lua`. | 0.2.22 |
-| `omsi.plugin.permissions()` | list of strings | The permissions the plugin has (a plain `.lua` file has them all). | 0.2.22 |
+| `omsi.plugin.permissions()` | list of strings | The permissions the plugin has (native process access additionally requires player opt-in). | 0.2.22 |
 | `omsi.plugin.read(path)` | text, or nil and the reason | A file of the plugin's own folder (a table of stops, a translation): read only, relative to the folder. | 0.2.22 |
 | `omsi.plugin.send(to, topic, [data])` | nil | Sends a message to another plugin (by its name): it hears `message(from, topic, data)` in its next frame. The data is numbers, texts, booleans or tables of them. | 0.2.22 |
 | `omsi.plugin.set_setting(key, value)` | boolean | Changes a setting (held to its range; saved); `true` when it took the value. | 0.2.22 |
@@ -777,6 +785,17 @@ declared to call the function (a plain `.lua` file has them all).
 | `omsi.storage.keys()` | list of strings | The keys stored, in the order they were first set. *Permission: `storage`.* | 0.2.22 |
 | `omsi.storage.save()` | nil | Writes the storage now (it is written by itself when the game ends). *Permission: `storage`.* | 0.2.22 |
 | `omsi.storage.set(key, value)` | nil | Stores a value under a key: a number, text, boolean or a table of them (`nil` removes it). It is written when the game ends, the plugin is loaded again, or `storage.save()` is called. *Permission: `storage`.* | 0.2.22 |
+
+#### External programs
+
+| Function | Returns | What it does | Since |
+| --- | --- | --- | --- |
+| `omsi.process.exit_code(handle)` | code or nil, state or reason | Nonblocking exit code lookup: `nil, "running"` while running; `code, "exited"` after normal exit. A nonzero code is retained. Signal termination returns `nil, "exited"`; inspect `process.status` for details. An unknown handle returns `nil` and a reason. *Permission: `process`.* | 0.3.40 |
+| `omsi.process.forget(handle)` | true, or nil and reason | Release a completed process handle and its retained exit code. A running process cannot be forgotten. *Permission: `process`.* | 0.3.40 |
+| `omsi.process.kill(handle)` | true, or nil and reason | Request termination of a plugin-owned direct child without waiting. Poll `process.status` for completion; descendants are not tracked. *Permission: `process`.* | 0.3.40 |
+| `omsi.process.start(file, [args], [options])` | handle, or nil and reason | Start a native program without waiting for it. `args` is a list of separate strings, passed literally without shell expansion. Options: `cwd` (working directory) and `env` (string-to-string environment overrides; other variables inherited). Use an absolute executable path when setting `cwd`; relative executable lookup follows the platform's rules. Standard streams are disconnected. At most 32 handles per plugin; use `process.forget` after completion. Direct children are terminated on plugin stop, disable or reload. Disabled by default: the player must list this plugin entry file in OMSI_PLUGIN_PROCESS_ALLOW, and packaged plugins must also declare process. This permission runs programs outside the plugin file sandbox; only grant it to trusted plugins. *Permission: `process`.* | 0.3.40 |
+| `omsi.process.status(handle)` | table, or nil and reason | Nonblocking status: `{pid, running, exited, code, success, signal}`. While running `code`, `success` and `signal` are nil. After exit `code` is the exit code (including nonzero); termination by a signal has no code, and `signal` is available on Unix. Results remain readable until forgotten. *Permission: `process`.* | 0.3.40 |
+| `omsi.process.wait(handle)` | exit code or nil, state or reason | Lua: suspend this plugin until its direct child exits, then return `code, "exited"` (nonzero codes retained; nil code on signal exit). The game and other plugins keep running; no game-thread wait occurs. Works in the main chunk, start/frame/event handlers and timers. Queued callbacks resume afterwards (limit 256), and normal frames/timers pause during the wait. Stop/reload cancels the continuation and terminates the child. A nested `emit` callback or manually resumed coroutine cannot suspend. Other language bindings should poll `process.exit_code` instead. *Permission: `process`.* | 0.3.40 |
 
 #### Programs on this computer
 
