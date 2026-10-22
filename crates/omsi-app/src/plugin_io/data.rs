@@ -29,27 +29,6 @@ pub(crate) fn read(
     let string = |s: String| Ok(vec![V::String(s)]);
     let index = |i: Option<usize>| number(i.map_or(-1.0, |i| i as f32));
     match q {
-        Q::GetFontIndex => {
-            let name = text(0);
-            let i = match h
-                .fonts
-                .entries
-                .iter()
-                .position(|f| f.0.eq_ignore_ascii_case(name))
-            {
-                Some(i) => i,
-                None => {
-                    let atlas = if name.trim().is_empty() {
-                        None
-                    } else {
-                        h.font_lib.as_ref().and_then(|l| l.lock().load(name))
-                    };
-                    h.fonts.entries.push((name.to_owned(), atlas));
-                    h.fonts.entries.len() - 1
-                }
-            };
-            index(h.fonts.entries[i].1.as_ref().map(|_| i))
-        }
         Q::TextLength => number(
             h.fonts
                 .entries
@@ -229,7 +208,8 @@ mod tests {
                         "sttextout",
                         "stcopycolor",
                         "stloadtex",
-                        "givechangecoin"
+                        "givechangecoin",
+                        "getfontindex"
                     ]
                     .contains(name),
                 "missing getter {name}"
@@ -245,7 +225,6 @@ mod tests {
             "sentinel\n",
             "number\n",
         );
-        // NrSpecRandom intentionally draws a fresh seed without a fleet number.
         v.state.str_vars[v.host.number_var.unwrap() as usize] = "1234".into();
         v.host.tt_stops = vec![("Night stop".into(), 86460.0, 86490.0)];
         v.host.tt_line = "200E".into();
@@ -294,7 +273,6 @@ mod tests {
                     V::String(s) => stack.push_str(s.clone()),
                 }
             }
-            // Reference comparison only: the production getter above does not dispatch callbacks.
             v.host
                 .callback(q.name(), NameId::MAX, &mut stack, &mut v.state);
             let expected = match q.result() {

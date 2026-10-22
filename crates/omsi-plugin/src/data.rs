@@ -27,7 +27,6 @@ macro_rules! queries {
     }
 }
 queries! {
-    GetFontIndex("GetFontIndex", ["font":String], Number),
     TextLength("TextLength", ["text":String, "font":Number], Number),
     StReadPixel("STReadPixel", ["texture":Number, "x":Number, "y":Number], Rgba),
     StGetR("STGetR", ["texture":Number], Number),

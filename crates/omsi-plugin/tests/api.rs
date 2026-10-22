@@ -293,6 +293,8 @@ fn data_queries_validate_types_and_reject_mutations_without_a_vehicle() {
         local value, reason = omsi.game.query("GetTTBusstopArr", {0})
         assert(value == nil and type(reason) == "string")
         assert(not pcall(omsi.game.query, "GiveChangeCoin", {0}))
+        assert(not pcall(omsi.game.query, "GetFontIndex", {"Arial"}))
+        assert(omsi.process == nil)
         assert(not pcall(omsi.game.query, "STDrawPixel", {0,1,2}))
         assert(not pcall(omsi.game.query, "GetTTDelay", {1}))
         assert(not pcall(omsi.game.query, "GetTTBusstopArr", {"0"}))
@@ -308,31 +310,19 @@ fn data_queries_validate_types_and_reject_mutations_without_a_vehicle() {
     assert_eq!(g.messages,["validated"]);
 }
 
-#[cfg(unix)]
 #[test]
-fn lua_process_exit_code_is_nonblocking_and_retained() {
-    let mut g = Game::default();
-    let mut plugins = run("process-code", r#"
-        local id = assert(omsi.process.start("/bin/sh", {"-c", "exit 23"}))
+fn nested_emit_keeps_the_outer_calls_budget() {
+    let mut g = Game::new();
+    let began = std::time::Instant::now();
+    let p = run("nested-budget", r#"
+        omsi.on("nested", function() omsi.message("nested ran") end)
         function on_frame()
-            local code, state = omsi.process.exit_code(id)
-            if state == "running" then assert(code == nil); return end
-            assert(state == "exited" and code == 23)
-            assert(omsi.process.exit_code(id) == 23)
-            local status = assert(omsi.process.status(id))
-            assert(status.exited and not status.running and not status.success and status.code == 23)
-            assert(omsi.process.forget(id))
-            local missing, err = omsi.process.status(id)
-            assert(missing == nil and type(err) == "string")
-            omsi.message("exit 23")
-            on_frame = nil
+            omsi.emit("nested")
+            while true do end
         end
     "#, &mut g, 1);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while g.messages.is_empty() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        plugins.frame(&mut g);
-    }
-    assert_eq!(g.messages,["exit 23"]);
-    plugins.finalize();
+    assert!(p.lua[0].disabled);
+    assert!(g.messages.iter().any(|m| m == "nested ran"));
+    assert!(g.messages.iter().any(|m| m.contains("longer than 50 ms")));
+    assert!(began.elapsed().as_secs_f32() < 2.0);
 }

@@ -166,24 +166,3 @@ fn a_lua_file_of_the_same_name_wins() {
     assert_eq!(plugins.lua.len(), 1);
     assert!(plugins.lua[0].path.extension().is_some_and(|x| x == "lua"));
 }
-
-#[test]
-fn process_api_requires_its_explicit_oop_permission() {
-    let d = dir("process-denied");
-    let oop = OopBuilder::new(header("org.test.no-process", Kind::Lua, "main.lua", &["ui"]))
-        .file("main.lua", r#"
-            function on_frame()
-                for _, name in ipairs({"start", "status", "exit_code", "wait", "kill", "forget"}) do
-                    local ok, err = pcall(omsi.process[name], "nonexistent-program")
-                    assert(not ok and tostring(err):find('no "process" permission', 1, true))
-                end
-                omsi.message("process denied")
-            end
-        "#).write().unwrap();
-    std::fs::write(d.join("denied.oop"), oop).unwrap();
-    let mut plugins = Plugins::load(&[d], &HostConfig::default());
-    let mut g = Game::default();
-    plugins.frame(&mut g);
-    assert_eq!(g.messages,["process denied"]);
-    plugins.finalize();
-}

@@ -454,7 +454,8 @@ and its current HOF and timetable. No bus returns `nil, reason`. An optional thi
 argument selects a loaded scripted scenery object's map id instead, allowing `GetArrBus*`
 to read a departure board's actual arrivals even without a player vehicle. Find object ids
 with `omsi.map.objects_near(x, y)`; an unloaded or nonscripted object returns `nil, reason`. Mutation/drawing commands
-are deliberately not data getters.
+are deliberately not data getters. `GetFontIndex` is excluded because it can load fonts
+and extend the vehicle's font list.
 
 ```lua
 local text = omsi.game.query("GetTerminusString", {0, 0})
@@ -470,71 +471,6 @@ if tour then
 end
 ```
 
-### Starting and monitoring an external program
-
-Pass arguments separately; there is no implicit shell. On Windows this starts an `.exe`;
-for a batch file explicitly select the appropriate command interpreter. The game does not
-wait for the process to finish. `cwd` sets its working directory; `env` overrides named
-environment variables. Standard streams are disconnected. Only direct children belong to
-the plugin: unloading, disabling or reloading it kills and reaps those children, without
-waiting on the game thread; programs they launch themselves are not tracked.
-
-```lua
-local handle, reason = omsi.process.start("D:/Tools/MyHelper/helper.exe", {"--mode", "bus"}, {
-    cwd = "D:/Tools/MyHelper",
-    env = {OPENOMSI_COMPANION = "1"},
-})
-if handle then
-    local timer
-    timer = omsi.every(0.25, function()
-        local code, state = omsi.process.exit_code(handle)
-        if state == "exited" then
-            -- 0 means success; nonzero codes are preserved. On signal exit code is nil.
-            local status = omsi.process.status(handle)
-            print(code, status.success, status.signal)
-            omsi.process.forget(handle)
-            omsi.cancel(timer)
-        end
-    end)
-else
-    print(reason)
-end
-```
-
-For sequential Lua code, `omsi.process.wait(handle)` provides the `WaitForExit` pattern.
-It suspends only this plugin's Lua continuation: the game and other plugins keep running.
-The statements after `wait` run only after the child exits; local variables are preserved.
-The wait itself consumes no Lua execution budget. Each executed/resumed slice still has
-its usual time limit. Normal frame/timer callbacks pause; callbacks already dispatched in
-the same frame are deferred until the continuation completes (up to 256). Reload or stop
-cancels the continuation and terminates the child. Main chunks, start/frame/event handlers
-and timers support waiting; nested `emit` callbacks and manually resumed coroutines cannot
-suspend. WASM plugins can use `process.exit_code` polling instead.
-
-For example, this follows the ConnectionMaker sequence. Each argument is already a
-separate string, so do not add shell quotes around `connections` or the output path.
-The exit code is returned unchanged; ConnectionMaker can use it as a texture count.
-
-```lua
-local function generate_connections(id, connections, width, height, path, filename)
-    omsi.log("Generating connection images for BS170_" .. id .. "...")
-    local handle, reason = omsi.process.start("plugins/ConnectionMaker.exe", {
-        "-text", connections,
-        "-width", tostring(width), "-height", tostring(height),
-        "-outpath", path .. "/" .. filename,
-    })
-    if not handle then error(reason) end
-
-    local count, state = omsi.process.wait(handle)
-    omsi.process.forget(handle)
-    if state ~= "exited" or count == nil then error("ConnectionMaker: " .. state) end
-    omsi.log(string.format("%d textures generated for BS170_%s!", count, id))
-end
-
--- Call generate_connections(...) from your normal plugin code.
--- Execution after process.wait resumes when ConnectionMaker has finished.
-```
-
 ### Safety and errors
 
 A Lua plugin gets Lua 5.4 with the safe libraries only: `string`, `table`, `math`, `utf8`,
@@ -545,11 +481,6 @@ for compiled code), and `string.dump` gives no code. A plugin reads and writes f
 its own data folder (`..` and absolute paths are refused) and reads its own folder; it
 cannot reach the network either: `omsi.send` talks only to programs on this computer, and
 only to ports from 1024 up. It holds at most 256 MB of memory.
-
-`omsi.process.*` is an explicit exception: it starts native programs with the game's OS
-permissions, outside this file/network sandbox. An `.oop` must declare `process`; plain
-`.lua` plugins have all API permissions, including this one, and must be trusted.
-The Lua `os.execute` and `io` libraries remain disabled.
 
 * An error in a handler is written to `game.log` and shown on the screen; the other
   plugins and the game carry on. After 10 errors the plugin is switched off until you
@@ -882,17 +813,6 @@ declared to call the function (a plain `.lua` file has them all).
 | `omsi.storage.keys()` | list of strings | The keys stored, in the order they were first set. *Permission: `storage`.* | 0.2.22 |
 | `omsi.storage.save()` | nil | Writes the storage now (it is written by itself when the game ends). *Permission: `storage`.* | 0.2.22 |
 | `omsi.storage.set(key, value)` | nil | Stores a value under a key: a number, text, boolean or a table of them (`nil` removes it). It is written when the game ends, the plugin is loaded again, or `storage.save()` is called. *Permission: `storage`.* | 0.2.22 |
-
-#### External programs
-
-| Function | Returns | What it does | Since |
-| --- | --- | --- | --- |
-| `omsi.process.exit_code(handle)` | code or nil, state or reason | Nonblocking exit code lookup: `nil, "running"` while running; `code, "exited"` after normal exit. A nonzero code is retained. Signal termination returns `nil, "exited"`; inspect `process.status` for details. An unknown handle returns `nil` and a reason. *Permission: `process`.* | 0.3.40 |
-| `omsi.process.forget(handle)` | true, or nil and reason | Release a completed process handle and its retained exit code. A running process cannot be forgotten. *Permission: `process`.* | 0.3.40 |
-| `omsi.process.kill(handle)` | true, or nil and reason | Request termination of a plugin-owned direct child without waiting. Poll `process.status` for completion; descendants are not tracked. *Permission: `process`.* | 0.3.40 |
-| `omsi.process.start(file, [args], [options])` | handle, or nil and reason | Start a native program without waiting for it. `args` is a list of separate strings, passed literally without shell expansion. Options: `cwd` (working directory) and `env` (string-to-string environment overrides; other variables inherited). Use an absolute executable path when setting `cwd`; relative executable lookup follows the platform's rules. Standard streams are disconnected. At most 32 handles per plugin; use `process.forget` after completion. Direct children are terminated on plugin stop, disable or reload. This permission runs programs outside the plugin file sandbox; only grant it to trusted plugins. *Permission: `process`.* | 0.3.40 |
-| `omsi.process.status(handle)` | table, or nil and reason | Nonblocking status: `{pid, running, exited, code, success, signal}`. While running `code`, `success` and `signal` are nil. After exit `code` is the exit code (including nonzero); termination by a signal has no code, and `signal` is available on Unix. Results remain readable until forgotten. *Permission: `process`.* | 0.3.40 |
-| `omsi.process.wait(handle)` | exit code or nil, state or reason | Lua: suspend this plugin until its direct child exits, then return `code, "exited"` (nonzero codes retained; nil code on signal exit). The game and other plugins keep running; no game-thread wait occurs. Works in the main chunk, start/frame/event handlers and timers. Queued callbacks resume afterwards (limit 256), and normal frames/timers pause during the wait. Stop/reload cancels the continuation and terminates the child. A nested `emit` callback or manually resumed coroutine cannot suspend. Other language bindings should poll `process.exit_code` instead. *Permission: `process`.* | 0.3.40 |
 
 #### Programs on this computer
 

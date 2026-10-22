@@ -213,7 +213,6 @@ pub struct PluginState {
     pub settings: super::fns::plugin::Settings,
     /// Sounds it started (stopped when it stops).
     pub voices: Vec<u64>,
-    pub processes: super::process::Processes,
 }
 
 impl PluginState {
@@ -243,7 +242,6 @@ impl PluginState {
             sender: Default::default(),
             settings: Default::default(),
             voices: Vec::new(),
-            processes: Default::default(),
         }
     }
 
@@ -280,7 +278,6 @@ impl PluginState {
             self.disabled = true;
         }
         if self.disabled {
-            self.processes.stop_all();
             // (its buttons would answer nothing any more)
             self.hub.ui.borrow_mut().remove_owner(self.owner);
         }
@@ -400,7 +397,6 @@ fn unit(ctx: &mut Ctx<'_>, f: impl FnOnce(&mut Ctx<'_>) -> Result<(), CallError>
 /// game's events, the messages of other plugins, the panels' focus, clicks and changes,
 /// then timers, watches, keys, the events worked out from what changed, and `frame`.
 pub fn frame(ctx: &mut Ctx<'_>) {
-    ctx.state().processes.poll();
     if ctx.state().disabled {
         return;
     }
@@ -627,7 +623,6 @@ pub fn stop(ctx: &mut Ctx<'_>) {
 /// What goes when a plugin goes, whether it stopped or failed to start: its storage is
 /// written, its sounds stop, its panels go and it leaves the list of plugins.
 pub fn finish(ctx: &mut Ctx<'_>) {
-    ctx.state().processes.stop_all();
     super::fns::storage::flush(ctx.state());
     let voices = std::mem::take(&mut ctx.state().voices);
     for v in voices {

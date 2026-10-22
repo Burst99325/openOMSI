@@ -70,7 +70,7 @@ fn bootstrap(p: &dyn Platform) -> Answer {
     let root = core::root_dir().map(|p| p.to_string_lossy().to_string());
     let choice: Value = std::fs::read_to_string(core::data_dir().join("launcher-duty.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}));
     let favourites: Vec<String> = std::fs::read_to_string(core::data_dir().join("favourite-buses.txt")).map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| l.replace('\\', "/").to_lowercase()).collect()).unwrap_or_default();
-    let languages: Vec<Value> = core::LANGUAGES.iter().map(|(code, name, iso, _)| json!({ "code": code, "name": name, "iso": iso })).collect();
+    let languages: Vec<Value> = core::LANGUAGES.iter().map(|(code, name, iso, _, _)| json!({ "code": code, "name": name, "iso": iso })).collect();
     // (a crash the last run left behind with nobody to tell: shown at the start, as the
     // game's own launcher did)
     let crash = p.previous_run_crash().map(|(what, tail)| crash_json(&what, &tail));
@@ -486,6 +486,22 @@ fn server_query(address: String) -> Answer {
     }))
 }
 
+/// The public server list, moderated here (a flagged name or message is covered, an icon
+/// shown only if this launcher cleared it): the page shows what this returns and nothing the
+/// service said that was not checked (`omsi-serverlist`).
+fn public_servers() -> Answer {
+    let m = omsi_serverlist::BuiltinModerator;
+    let list = omsi_serverlist::client::fetch(omsi_serverlist::DEFAULT_SERVICE, &m)?;
+    Ok(json!(list
+        .into_iter()
+        .map(|e| json!({
+            "id": e.id, "address": e.address, "name": e.name, "motd": e.motd, "map": e.map,
+            "players": e.players, "max_players": e.max_players, "version": e.version, "covered": e.covered,
+            "icon": e.icon.as_deref().map(|i| format!("data:image/png;base64,{}", base64(i))),
+        }))
+        .collect::<Vec<_>>()))
+}
+
 /// A code host's first responsive status endpoint, including its tunnel.
 fn host_status(code: &str) -> Result<omsi_net::ws::ServerInfo, String> {
     omsi_net::ws::query_session(code)
@@ -868,6 +884,7 @@ pub fn call(cmd: &str, args: &Value, p: &dyn Platform) -> Answer {
         "servers_get" => servers_get(),
         "servers_save" => servers_save(arg::<Value>(args, "list")?),
         "server_query" => server_query(arg::<String>(args, "address")?),
+        "public_servers" => public_servers(),
         "choice_save" => choice_save(arg::<Value>(args, "choice")?),
         "favourites_save" => favourites_save(arg::<Vec<String>>(args, "list")?),
         "depot_get" => depot_get(),
@@ -930,14 +947,14 @@ mod setup_tests {
         let not_omsi = home.join("Downloads");
         std::fs::create_dir_all(&not_omsi).unwrap();
         let was = (std::env::var_os("HOME"), std::env::var_os("USERPROFILE"));
-        std::env::set_var("HOME", &home);
-        std::env::set_var("USERPROFILE", &home);
+        unsafe { std::env::set_var("HOME", &home) };
+        unsafe { std::env::set_var("USERPROFILE", &home) };
         let r = config_save(not_omsi.to_string_lossy().to_string(), String::new()).unwrap();
         let written = home.join(".openomsi").join("launcher.json").exists();
         for (k, v) in [("HOME", was.0), ("USERPROFILE", was.1)] {
             match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
+                Some(v) => unsafe { std::env::set_var(k, v) },
+                None => unsafe { std::env::remove_var(k) },
             }
         }
         assert_eq!(r["saved"], json!(false));

@@ -407,7 +407,7 @@ impl PluginIo for Io<'_> {
 
     fn data_query(&mut self, query: omsi_plugin::data::DataQuery, args: &[omsi_plugin::data::QueryValue], object: Option<i64>) -> Result<Vec<omsi_plugin::data::QueryValue>, String> {
         if let Some(id) = object {
-            let object = self.app_mut().ok_or("no game")?.session.scenery.objects_mut().iter_mut().find(|o| o.map_id == id).ok_or("scripted scenery object not loaded")?;
+            let object = self.app_mut().ok_or("no game")?.session.scenery.find_mut(id).ok_or("scripted scenery object not loaded")?;
             let number = object.inst.str_var("number").to_owned();
             return crate::plugin_io::data::read(&mut object.inst.host, &number, query, args);
         }

@@ -16,7 +16,6 @@ pub mod events;
 mod fns;
 pub mod json;
 pub mod paths;
-pub mod process;
 pub mod runtime;
 pub mod value;
 
@@ -73,8 +72,6 @@ pub enum Perm {
     NetworkLocal,
     /// Messages to the other players of a LAN game.
     Lan,
-    /// Launching native programs outside the plugin sandbox.
-    Process,
 }
 
 impl Perm {
@@ -91,7 +88,6 @@ impl Perm {
             Perm::Audio => "audio",
             Perm::NetworkLocal => "network_local",
             Perm::Lan => "lan",
-            Perm::Process => "process",
         }
     }
 
@@ -99,7 +95,7 @@ impl Perm {
         Self::ALL.into_iter().find(|p| p.as_str() == s)
     }
 
-    pub const ALL: [Perm; 10] = [Perm::Ui, Perm::Storage, Perm::VehicleWrite, Perm::TrafficWrite, Perm::WorldWrite, Perm::Camera, Perm::Audio, Perm::NetworkLocal, Perm::Lan, Perm::Process];
+    pub const ALL: [Perm; 9] = [Perm::Ui, Perm::Storage, Perm::VehicleWrite, Perm::TrafficWrite, Perm::WorldWrite, Perm::Camera, Perm::Audio, Perm::NetworkLocal, Perm::Lan];
 }
 
 /// The handler of a function.
