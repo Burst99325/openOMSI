@@ -2720,7 +2720,7 @@
       "name": "process.forget",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Release a completed process handle and its retained exit code. A running process cannot be forgotten.",
+      "doc": "Release a completed process handle and its retained exit code. A running process cannot be forgotten. On Windows, closing its job also terminates any remaining descendants.",
       "params": [
         {
           "name": "handle",
@@ -2736,7 +2736,7 @@
       "name": "process.kill",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Request termination of a plugin-owned direct child without waiting. Poll `process.status` for completion; descendants are not tracked.",
+      "doc": "Request termination of a plugin-owned direct child without waiting. Poll `process.status` for completion; Windows also terminates the job descendants, Unix targets only the direct child.",
       "params": [
         {
           "name": "handle",
@@ -2752,7 +2752,7 @@
       "name": "process.start",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Start a native program without waiting for it. `args` is a list of separate strings, passed literally without shell expansion. Options: `cwd` (working directory) and `env` (string-to-string environment overrides; other variables inherited). Use an absolute executable path when setting `cwd`; relative executable lookup follows the platform's rules. Standard streams are disconnected. At most 32 handles per plugin; use `process.forget` after completion. Direct children are terminated on plugin stop, disable or reload. Disabled by default: the player must list this plugin entry file in OMSI_PLUGIN_PROCESS_ALLOW, and packaged plugins must also declare process. This permission runs programs outside the plugin file sandbox; only grant it to trusted plugins.",
+      "doc": "Start an approved native helper without waiting. `file` must be a relative path inside the plugin folder and listed by SHA256 in the player's grant manifest. The entry, every folder file (including required modules), and helper hashes are rechecked before each start; changes revoke consent. `args` are separate literal strings without shell expansion. Options: `cwd` and `env` (string overrides, other variables inherited, except OMSI_PLUGIN_PROCESS_ALLOW is always removed). Standard streams are disconnected. Windows helpers must be .exe files. At most 32 handles per plugin; forget completed handles. Stop, disable and reload terminate children; Windows job objects also terminate descendants and survive abrupt game exit, Linux uses a parent-death signal for direct children. Disabled by default: OMSI_PLUGIN_PROCESS_ALLOW must name an absolute JSON grant manifest; packages must also declare process. Approved helpers run with the game account's permissions.",
       "params": [
         {
           "name": "file",

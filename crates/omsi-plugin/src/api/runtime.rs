@@ -187,6 +187,7 @@ pub struct PluginState {
     /// The permissions it declared; native processes also need a host grant.
     pub perms: Option<HashSet<Perm>>,
     pub(crate) process_allowed: bool,
+    pub(crate) process_entry: Option<PathBuf>,
     /// Where its own files are (`plugin.read`, images, sounds): None for none.
     pub folder: Option<PathBuf>,
     /// Its data folder (`storage`, `files`), made when first written.
@@ -227,6 +228,7 @@ impl PluginState {
             owner,
             perms: None,
             process_allowed: false,
+            process_entry: None,
             folder,
             data_dir,
             hub,

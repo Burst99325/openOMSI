@@ -42,7 +42,7 @@ fn child(gate: &Path) -> String {
     let quote = |s: &str| json::encode(&Value::Str(s.into()));
     format!(
         r#"assert(omsi.process.start({}, {{"--exact", "process_wait_child", "--ignored"}}, {{env = {{PLUGIN_WAIT_TEST_GATE = {}}}}}))"#,
-        quote(std::env::current_exe().unwrap().to_str().unwrap()),
+        quote(if cfg!(windows) { "helper.exe" } else { "helper" }),
         quote(gate.to_str().unwrap())
     )
 }
@@ -59,7 +59,7 @@ fn drive_until(p: &mut Plugins, g: &mut Game, done: impl Fn(&Game) -> bool) {
 #[test]
 fn main_chunk_waits_without_blocking_game_or_other_plugins() {
     let d = dir("wait-main");
-    let gate = d.join("gate");
+    let gate = dir("process-gate").join("gate");
     let script = format!(
         r#"
         local handle = {}
@@ -101,7 +101,7 @@ fn main_chunk_waits_without_blocking_game_or_other_plugins() {
 #[test]
 fn wait_in_handler_preserves_locals_and_defers_following_callbacks() {
     let d = dir("wait-handler");
-    let gate = d.join("gate");
+    let gate = dir("process-gate").join("gate");
     std::fs::write(
         d.join("wait.lua"),
         format!(
@@ -140,7 +140,7 @@ fn wait_in_handler_preserves_locals_and_defers_following_callbacks() {
 #[test]
 fn resumed_lua_keeps_its_instruction_budget() {
     let d = dir("wait-budget");
-    let gate = d.join("gate");
+    let gate = dir("process-gate").join("gate");
     std::fs::write(
         d.join("wait.lua"),
         format!(
@@ -176,7 +176,7 @@ fn resumed_lua_keeps_its_instruction_budget() {
 #[test]
 fn timer_can_wait_and_be_cancelled_by_unloading() {
     let d = dir("wait-unload");
-    let gate = d.join("gate");
+    let gate = dir("process-gate").join("gate");
     std::fs::write(
         d.join("wait.lua"),
         format!(
@@ -217,8 +217,9 @@ fn timer_can_wait_and_be_cancelled_by_unloading() {
 #[test]
 fn a_resumed_handler_can_wait_for_another_child() {
     let d = dir("wait-twice");
-    let first = d.join("first");
-    let second = d.join("second");
+    let gates = dir("process-two-gates");
+    let first = gates.join("first");
+    let second = gates.join("second");
     std::fs::write(
         d.join("wait.lua"),
         format!(
@@ -254,11 +255,17 @@ fn a_resumed_handler_can_wait_for_another_child() {
 }
 
 fn load(dirs: &[PathBuf]) -> Plugins {
-    let paths = dirs.iter().flat_map(|d| omsi_plugin::lua::find_lua(d));
+    use omsi_plugin::api::process::{ProcessGrant, ProcessGrants};
+    let helper = if cfg!(windows) { "helper.exe" } else { "helper" };
+    for d in dirs {
+        std::fs::copy(std::env::current_exe().unwrap(), d.join(helper)).unwrap();
+    }
+    let grants = dirs.iter().flat_map(|d| omsi_plugin::lua::find_lua(d))
+        .map(|entry| ProcessGrant::capture(&entry, entry.parent().unwrap(), &[helper.into()]).unwrap()).collect();
     Plugins::load_with_process_grants(
         dirs,
         &HostConfig::default(),
-        omsi_plugin::api::process::ProcessGrants::from_paths(paths),
+        ProcessGrants { grants },
     )
 }
 
@@ -390,6 +397,30 @@ fn callback_cost() {
         for _ in 0..100000 { p.frame(&mut g); }
         println!("process_consent={consent}: {:.3} us/frame (on_frame + 3 timers)", start.elapsed().as_secs_f64() * 10.0);
         assert!(!p.lua[0].disabled);
+        p.finalize();
+    }
+}
+
+#[test]
+fn reload_revokes_consent_after_entry_or_module_changes() {
+    use omsi_plugin::api::process::ProcessGrants;
+    for module in [false, true] {
+        let d = dir("process-grant-reload");
+        let entry = d.join("plugin.lua");
+        let source = "function on_frame() omsi.message(omsi._managed_call and 'approved' or 'denied') end";
+        std::fs::write(&entry, source).unwrap();
+        let module_path = d.join("module.lua");
+        std::fs::write(&module_path, "return 1").unwrap();
+        let grants = ProcessGrants::from_paths([entry.clone()]);
+        let mut p = Plugins::load_with_process_grants(std::slice::from_ref(&d), &HostConfig::default(), grants);
+        let mut g = game();
+        p.frame(&mut g);
+        assert_eq!(g.messages.last().unwrap(), "approved");
+        if module { std::fs::write(module_path, "return 2").unwrap(); }
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::write(&entry, format!("{source}\n-- reloaded")).unwrap();
+        p.frame(&mut g);
+        assert_eq!(g.messages.last().unwrap(), "denied", "{:?}", g.messages);
         p.finalize();
     }
 }

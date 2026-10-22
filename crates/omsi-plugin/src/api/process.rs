@@ -1,7 +1,13 @@
 mod grants;
-pub use grants::ProcessGrants;
+pub use grants::{ProcessGrant, ProcessGrants};
 use std::collections::BTreeMap;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
+#[cfg(not(windows))]
+use std::process::Child;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows::Child;
 
 const MAX_CHILDREN: usize = 32;
 #[derive(Default)]
@@ -31,20 +37,36 @@ impl Processes {
             .checked_add(1)
             .filter(|n| *n <= i64::MAX as u64)
             .ok_or("process handle limit reached")?;
+        if env.iter().any(|(key, value)| key.is_empty() || key.contains(['=', '\0']) || value.contains('\0')) {
+            return Err("invalid process environment".into());
+        }
         let mut cmd = Command::new(file);
         cmd.args(args)
             .envs(env.iter().map(|(k, v)| (k, v)))
+            .env_remove("OMSI_PLUGIN_PROCESS_ALLOW")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         if let Some(cwd) = cwd {
             cmd.current_dir(cwd);
         }
-        #[cfg(windows)]
+        #[cfg(target_os = "linux")]
         {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000);
+            use std::os::unix::process::CommandExt;
+            let parent = std::process::id() as libc::pid_t;
+            unsafe {
+                cmd.pre_exec(move || {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent { return Err(std::io::Error::from_raw_os_error(libc::ESRCH)); }
+                    Ok(())
+                });
+            }
         }
+        #[cfg(windows)]
+        let child = windows::spawn(&cmd).map_err(|e| e.to_string())?;
+        #[cfg(not(windows))]
         let child = cmd.spawn().map_err(|e| e.to_string())?;
         self.next = id;
         self.children.insert(id, child);
@@ -136,6 +158,13 @@ mod tests {
         p.forget(id).unwrap();
         assert!(p.status(id).is_err());
         assert!(p.kill(id).is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn exit_259_is_not_confused_with_still_running() {
+        let mut p = Processes::default();
+        let id = shell(&mut p, "exit 259");
+        assert_eq!(exited(&mut p, id).code(), Some(259));
     }
     #[test]
     fn running_poll_and_kill_do_not_wait_for_child() {

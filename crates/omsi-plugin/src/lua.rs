@@ -5,8 +5,9 @@
 //! this binding. `omsi.data` is a table saved between sessions (`<name>.save.lua`). A changed
 //! file is loaded again while the game runs.
 //!
-//! Each plugin has its own Lua state with the safe libraries only: no `io`, no `os` beyond
-//! the clock, no C modules, no `dofile`, no `string.dump` and no binary chunks anywhere (Lua
+//! Each plugin has its own Lua state with the safe libraries only: no `io`, only clock/date
+//! functions in `os`; native helpers require a hash-bound player grant. No C modules,
+//! `dofile`, `string.dump` or binary chunks anywhere (Lua
 //! has no bytecode checker: a crafted binary chunk can break out of the VM), at most 256 MB
 //! of memory; `require` finds modules through the plugin's [`LuaSource`] - its own folder on
 //! disk. A call that runs longer than 50 ms is stopped and the plugin switched off; a plugin
@@ -210,7 +211,8 @@ impl LuaPlugin {
         let owner = NEXT_OWNER.fetch_add(1, Ordering::Relaxed);
         let mut state = PluginState::new(&spec.name, "Lua plugin", "lua", owner, hub, spec.folder.clone(), spec.data_dir.clone());
         state.perms = spec.perms.clone();
-        state.process_allowed = state.hub.process_grants.allows(path);
+        state.process_allowed = state.hub.process_grants.allows(path, state.folder.as_deref());
+        state.process_entry = Some(path.to_path_buf());
         let mut p = LuaPlugin { name: spec.name.clone(), path: path.to_path_buf(), spec, binding: None, state: Box::new(state), slot: Rc::new(Cell::new(None)), stamp: None, last_check: None, disabled: false, start_pending: false };
         p.start(io)?;
         Ok(p)
@@ -342,7 +344,8 @@ impl LuaPlugin {
         let old = &self.state;
         let mut s = PluginState::new(&self.spec.name, "Lua plugin", "lua", old.owner, old.hub.clone(), self.spec.folder.clone(), self.spec.data_dir.clone());
         s.perms = self.spec.perms.clone();
-        s.process_allowed = s.hub.process_grants.allows(&self.path);
+        s.process_allowed = s.hub.process_grants.allows(&self.path, s.folder.as_deref());
+        s.process_entry = Some(self.path.clone());
         self.state = Box::new(s);
         self.disabled = false;
         self.start_pending = false;
