@@ -216,14 +216,9 @@ fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
 mod tests {
     use super::*;
     fn fixture() -> (PathBuf, PathBuf, ProcessGrants) {
-        let root = std::env::temp_dir().join(format!(
-            "omsi-grants-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("omsi-grants-{}-{}-{unique}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(root.join("modules")).unwrap();
         let entry = root.join("plugin.lua");
         std::fs::write(&entry, "return 1").unwrap();
