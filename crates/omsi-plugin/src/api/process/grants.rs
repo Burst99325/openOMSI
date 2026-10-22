@@ -4,6 +4,9 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+#[path = "candidates.rs"]
+mod candidates;
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessGrants {
@@ -110,8 +113,8 @@ impl ProcessGrants {
             return false;
         };
         self.grants.iter().any(|g| {
-            lexical(&g.entry).as_ref() == Some(&entry)
-                && lexical(&g.folder).as_ref() == Some(&folder)
+            lexical(&g.entry).is_some_and(|p| candidates::matches(&p, &entry))
+                && lexical(&g.folder).is_some_and(|p| candidates::matches(&p, &folder))
         })
     }
 
@@ -282,6 +285,37 @@ mod tests {
         assert!(!grants.allows(&entry, Some(&root.join("modules"))));
         std::fs::remove_file(root.join("modules/code.lua")).unwrap();
         assert!(!grants.allows(&entry, Some(&root)));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(windows)]
+    #[test]
+    fn short_paths_reach_worker_verification_but_do_not_grant_access() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetShortPathNameW(long: *const u16, short: *mut u16, size: u32) -> u32;
+        }
+        let (root, entry, grants) = fixture();
+        let long: Vec<u16> = entry.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut short = vec![0; 32768];
+        // SAFETY: both buffers are valid for the supplied lengths and long is NUL terminated.
+        let n = unsafe { GetShortPathNameW(long.as_ptr(), short.as_mut_ptr(), short.len() as u32) };
+        assert!(n > 0 && (n as usize) < short.len());
+        let short = PathBuf::from(std::ffi::OsString::from_wide(&short[..n as usize]));
+        assert!(grants.has_candidate(&short, short.parent()));
+        assert!(grants.helper(&short, short.parent(), "helper.exe").is_ok());
+        // The lexical DOS hint deliberately admits ambiguous aliases. Even identical
+        // bytes at a different canonical path must still be rejected by the worker.
+        let other = root.with_extension("alias~1");
+        std::fs::create_dir(&other).unwrap();
+        let other_entry = other.join("plugin.lua");
+        std::fs::copy(&entry, &other_entry).unwrap();
+        assert!(grants.has_candidate(&other_entry, Some(&other)));
+        assert!(grants.helper(&other_entry, Some(&other), "helper.exe").is_err());
+        std::fs::write(&entry, "modified plugin").unwrap();
+        assert!(grants.has_candidate(&short, short.parent()));
+        assert!(grants.helper(&short, short.parent(), "helper.exe").is_err());
+        std::fs::remove_dir_all(other).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
     #[cfg(unix)]
