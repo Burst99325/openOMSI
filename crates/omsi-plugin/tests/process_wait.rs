@@ -59,7 +59,7 @@ fn drive_until(p: &mut Plugins, g: &mut Game, done: impl Fn(&Game) -> bool) {
 #[test]
 fn main_chunk_waits_without_blocking_game_or_other_plugins() {
     let d = dir("wait-main");
-    let gate = dir("process-gate").join("gate");
+    let gate = dir("wait-main-gate").join("gate");
     let script = format!(
         r#"
         local handle = {}
@@ -101,7 +101,7 @@ fn main_chunk_waits_without_blocking_game_or_other_plugins() {
 #[test]
 fn wait_in_handler_preserves_locals_and_defers_following_callbacks() {
     let d = dir("wait-handler");
-    let gate = dir("process-gate").join("gate");
+    let gate = dir("wait-handler-gate").join("gate");
     std::fs::write(
         d.join("wait.lua"),
         format!(
@@ -140,7 +140,7 @@ fn wait_in_handler_preserves_locals_and_defers_following_callbacks() {
 #[test]
 fn resumed_lua_keeps_its_instruction_budget() {
     let d = dir("wait-budget");
-    let gate = dir("process-gate").join("gate");
+    let gate = dir("wait-budget-gate").join("gate");
     std::fs::write(
         d.join("wait.lua"),
         format!(
@@ -176,7 +176,7 @@ fn resumed_lua_keeps_its_instruction_budget() {
 #[test]
 fn timer_can_wait_and_be_cancelled_by_unloading() {
     let d = dir("wait-unload");
-    let gate = dir("process-gate").join("gate");
+    let gate = dir("wait-unload-gate").join("gate");
     std::fs::write(
         d.join("wait.lua"),
         format!(
