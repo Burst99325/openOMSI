@@ -13,6 +13,7 @@ use std::{
 #[ignore = "subprocess helper, exercised by the process wait tests"]
 fn process_wait_child() {
     let gate = std::env::var_os("PLUGIN_WAIT_TEST_GATE").expect("helper gate");
+    std::fs::write(Path::new(&gate).with_extension("pid"), std::process::id().to_string()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
     while !Path::new(&gate).exists() {
         if Instant::now() > deadline {
@@ -183,7 +184,7 @@ fn timer_can_wait_and_be_cancelled_by_unloading() {
             r#"
         omsi.after(0.01, function()
             local handle = {}
-            omsi.set_var("child_pid", omsi.process.status(handle).pid)
+            omsi.set_var("before_wait", 1)
             omsi.process.wait(handle)
             omsi.set_var("after_wait", 1)
         end)
@@ -195,8 +196,9 @@ fn timer_can_wait_and_be_cancelled_by_unloading() {
     .unwrap();
     let mut p = load(&[d]);
     let mut g = game();
-    drive_until(&mut p, &mut g, |g| g.vars["child_pid"] > 0.0);
-    let pid = g.vars["child_pid"] as u32;
+    let pid_file = gate.with_extension("pid");
+    drive_until(&mut p, &mut g, |_| pid_file.exists());
+    let pid: u32 = std::fs::read_to_string(pid_file).unwrap().parse().unwrap();
     p.lua[0].stop(&mut g);
     assert_eq!(g.vars["stopped"], 1.0);
     p.finalize();
@@ -407,20 +409,23 @@ fn reload_revokes_consent_after_entry_or_module_changes() {
     for module in [false, true] {
         let d = dir("process-grant-reload");
         let entry = d.join("plugin.lua");
-        let source = "function on_frame() omsi.message(omsi._managed_call and 'approved' or 'denied') end";
+        let source = r#"function on_frame()
+            local handle = assert(omsi.process.start("helper.exe"))
+            local _, state, reason = omsi.process.wait(handle)
+            assert(state == "failed")
+            omsi.message(reason)
+        end"#;
         std::fs::write(&entry, source).unwrap();
         let module_path = d.join("module.lua");
         std::fs::write(&module_path, "return 1").unwrap();
         let grants = ProcessGrants::from_paths([entry.clone()]);
         let mut p = Plugins::load_with_process_grants(std::slice::from_ref(&d), &HostConfig::default(), grants);
         let mut g = game();
-        p.frame(&mut g);
-        assert_eq!(g.messages.last().unwrap(), "approved");
+        drive_until(&mut p, &mut g, |g| g.messages.iter().any(|s| s.contains("helper is not listed")));
         if module { std::fs::write(module_path, "return 2").unwrap(); }
         std::thread::sleep(Duration::from_millis(1100));
         std::fs::write(&entry, format!("{source}\n-- reloaded")).unwrap();
-        p.frame(&mut g);
-        assert_eq!(g.messages.last().unwrap(), "denied", "{:?}", g.messages);
+        drive_until(&mut p, &mut g, |g| g.messages.iter().any(|s| s.contains("plugin content changed")));
         p.finalize();
     }
 }

@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct ProcessGrants {
     pub grants: Vec<ProcessGrant>,
+    #[cfg(test)]
+    #[serde(skip)]
+    pub(super) before_verify: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -67,6 +70,7 @@ impl ProcessGrants {
                 .into_iter()
                 .filter_map(|entry| ProcessGrant::capture(&entry, entry.parent()?, &[]).ok())
                 .collect(),
+            ..Default::default()
         }
     }
 
@@ -80,6 +84,35 @@ impl ProcessGrants {
             serde_json::from_slice(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes)).ok()
         })();
         result.unwrap_or_default()
+    }
+
+    pub(crate) fn has_candidate(&self, entry: &Path, folder: Option<&Path>) -> bool {
+        fn lexical(path: &Path) -> Option<PathBuf> {
+            let absolute = std::path::absolute(path).ok()?;
+            #[cfg(windows)]
+            {
+                let text = absolute.to_str()?;
+                return Some(PathBuf::from(
+                    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+                        format!(r"\\{unc}")
+                    } else {
+                        text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
+                    },
+                ));
+            }
+            #[cfg(not(windows))]
+            Some(absolute)
+        }
+        let Some(folder) = folder.or_else(|| entry.parent()) else {
+            return false;
+        };
+        let (Some(entry), Some(folder)) = (lexical(entry), lexical(folder)) else {
+            return false;
+        };
+        self.grants.iter().any(|g| {
+            lexical(&g.entry).as_ref() == Some(&entry)
+                && lexical(&g.folder).as_ref() == Some(&folder)
+        })
     }
 
     pub fn allows(&self, entry: &Path, folder: Option<&Path>) -> bool {
@@ -202,6 +235,7 @@ mod tests {
             entry,
             ProcessGrants {
                 grants: vec![grant],
+                ..Default::default()
             },
         )
     }

@@ -2750,7 +2750,7 @@
       "name": "process.exit_code",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Nonblocking exit code lookup: `nil, \"running\"` while running; `code, \"exited\"` after normal exit. A nonzero code is retained. Signal termination returns `nil, \"exited\"`; inspect `process.status` for details. An unknown handle returns `nil` and a reason.",
+      "doc": "Nonblocking exit code lookup (queued verification also counts as running): `nil, \"running\"` while running; `code, \"exited\"` after normal exit. A nonzero code is retained. Signal termination returns `nil, \"exited\"`; inspect `process.status` for details. Preparation failure returns `nil, \"failed\", reason`. An unknown handle returns `nil` and a reason.",
       "params": [
         {
           "name": "handle",
@@ -2766,7 +2766,7 @@
       "name": "process.forget",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Release a completed process handle and its retained exit code. A running process cannot be forgotten. On Windows, closing its job also terminates any remaining descendants.",
+      "doc": "Release a completed or failed process handle and its retained result. A running process cannot be forgotten. On Windows, closing its job also terminates any remaining descendants.",
       "params": [
         {
           "name": "handle",
@@ -2782,7 +2782,7 @@
       "name": "process.kill",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Request termination of a plugin-owned direct child without waiting. Poll `process.status` for completion; Windows also terminates the job descendants, Unix targets only the direct child.",
+      "doc": "Cancel a queued start or request termination of a plugin-owned direct child without waiting. Poll `process.status` for completion; Windows also terminates the job descendants, Unix targets only the direct child.",
       "params": [
         {
           "name": "handle",
@@ -2798,7 +2798,7 @@
       "name": "process.start",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Start an approved native helper without waiting. `file` must be a relative path inside the plugin folder and listed by SHA256 in the player's grant manifest. The entry, every folder file (including required modules), and helper hashes are rechecked before each start; changes revoke consent. `args` are separate literal strings without shell expansion. Options: `cwd` and `env` (string overrides, other variables inherited, except OMSI_PLUGIN_PROCESS_ALLOW is always removed). Standard streams are disconnected. Windows helpers must be .exe files. At most 32 handles per plugin; forget completed handles. Stop, disable and reload terminate children; Windows job objects also terminate descendants and survive abrupt game exit, Linux uses a parent-death signal for direct children. Disabled by default: OMSI_PLUGIN_PROCESS_ALLOW must name an absolute JSON grant manifest; packages must also declare process. Approved helpers run with the game account's permissions.",
+      "doc": "Queue an approved native helper without waiting; return a reserved handle immediately. Verification and OS process creation run on two shared workers with at most 32 globally queued starts. The 32-handle plugin limit (including queued and failed starts) is checked before admission. A full queue returns nil and a reason. Accepted starts can fail later: inspect status.error or exit_code/wait returning nil, failed, reason. `file` must be a relative path inside the plugin folder and listed by SHA256 in the player's grant manifest. The entry, every folder file (including required modules), and helper hashes are rechecked on the worker immediately before each start; changes revoke consent. `args` are separate literal strings without shell expansion. Options: `cwd` and `env` (string overrides, other variables inherited, except OMSI_PLUGIN_PROCESS_ALLOW is always removed). Standard streams are disconnected. Windows helpers must be .exe files. At most 32 handles per plugin; forget completed handles. Stop, disable and reload terminate children; Windows job objects also terminate descendants and survive abrupt game exit, Linux uses a parent-death signal for direct children. Disabled by default: OMSI_PLUGIN_PROCESS_ALLOW must name an absolute JSON grant manifest; packages must also declare process. Approved helpers run with the game account's permissions.",
       "params": [
         {
           "name": "file",
@@ -2824,7 +2824,7 @@
       "name": "process.status",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Nonblocking status: `{pid, running, exited, code, success, signal}`. While running `code`, `success` and `signal` are nil. After exit `code` is the exit code (including nonzero); termination by a signal has no code, and `signal` is available on Unix. Results remain readable until forgotten.",
+      "doc": "Nonblocking status: `{pid, starting, running, exited, failed, error, code, success, signal}`. While verification/start is pending, starting and running are true and pid is nil. Failed preparation sets failed/error without an exit code. While running `code`, `success` and `signal` are nil. After exit `code` is the exit code (including nonzero); termination by a signal has no code, and `signal` is available on Unix. Results remain readable until forgotten.",
       "params": [
         {
           "name": "handle",
@@ -2840,7 +2840,7 @@
       "name": "process.wait",
       "group": "process",
       "since": "0.3.40",
-      "doc": "Lua: suspend this plugin until its direct child exits, then return `code, \"exited\"` (nonzero codes retained; nil code on signal exit). The game and other plugins keep running; no game-thread wait occurs. Works in the main chunk, start/frame/event handlers and timers. Queued callbacks resume afterwards (limit 256), and normal frames/timers pause during the wait. Stop/reload cancels the continuation and terminates the child. A nested `emit` callback or manually resumed coroutine cannot suspend. Other language bindings should poll `process.exit_code` instead.",
+      "doc": "Lua: suspend this plugin through queued verification/start and until its direct child exits, then return `code, \"exited\"` (nonzero codes retained; nil code on signal exit). The game and other plugins keep running; no game-thread wait occurs. Works in the main chunk, start/frame/event handlers and timers. Queued callbacks resume afterwards (limit 256), and normal frames/timers pause during the wait. Stop/reload cancels the continuation and terminates the child. A nested `emit` callback or manually resumed coroutine cannot suspend. Preparation failure returns `nil, \"failed\", reason`. Other language bindings should poll `process.exit_code` instead.",
       "params": [
         {
           "name": "handle",

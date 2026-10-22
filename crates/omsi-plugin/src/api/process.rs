@@ -1,9 +1,11 @@
 mod grants;
+mod worker;
 pub use grants::{ProcessGrant, ProcessGrants};
 use std::collections::BTreeMap;
-use std::process::{Command, ExitStatus, Stdio};
 #[cfg(not(windows))]
 use std::process::Child;
+use std::process::{Command, ExitStatus, Stdio};
+pub(crate) use worker::StartRequest;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -14,11 +16,15 @@ const MAX_CHILDREN: usize = 32;
 pub struct Processes {
     next: u64,
     children: BTreeMap<u64, Child>,
+    pending: BTreeMap<u64, worker::Pending>,
 }
 
+#[derive(Clone, Default)]
 pub struct Status {
     pub pid: u32,
     pub exit: Option<ExitStatus>,
+    pub starting: bool,
+    pub error: Option<String>,
 }
 
 impl Processes {
@@ -29,7 +35,7 @@ impl Processes {
         cwd: Option<&str>,
         env: &[(String, String)],
     ) -> Result<u64, String> {
-        if self.children.len() >= MAX_CHILDREN {
+        if self.children.len() + self.pending.len() >= MAX_CHILDREN {
             return Err("too many process handles (limit 32); forget completed processes".into());
         }
         let id = self
@@ -37,51 +43,51 @@ impl Processes {
             .checked_add(1)
             .filter(|n| *n <= i64::MAX as u64)
             .ok_or("process handle limit reached")?;
-        if env.iter().any(|(key, value)| key.is_empty() || key.contains(['=', '\0']) || value.contains('\0')) {
-            return Err("invalid process environment".into());
-        }
-        let mut cmd = Command::new(file);
-        cmd.args(args)
-            .envs(env.iter().map(|(k, v)| (k, v)))
-            .env_remove("OMSI_PLUGIN_PROCESS_ALLOW")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        if let Some(cwd) = cwd {
-            cmd.current_dir(cwd);
-        }
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::process::CommandExt;
-            let parent = std::process::id() as libc::pid_t;
-            unsafe {
-                cmd.pre_exec(move || {
-                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    if libc::getppid() != parent { return Err(std::io::Error::from_raw_os_error(libc::ESRCH)); }
-                    Ok(())
-                });
-            }
-        }
-        #[cfg(windows)]
-        let child = windows::spawn(&cmd).map_err(|e| e.to_string())?;
-        #[cfg(not(windows))]
-        let child = cmd.spawn().map_err(|e| e.to_string())?;
+        let child = spawn(file, args, cwd, env)?;
         self.next = id;
         self.children.insert(id, child);
         Ok(id)
     }
 
+    pub(crate) fn check_capacity(&self) -> Result<(), String> {
+        if self.children.len() + self.pending.len() >= MAX_CHILDREN {
+            Err("too many process handles (limit 32); forget completed processes".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn start_checked(&mut self, request: StartRequest) -> Result<u64, String> {
+        self.check_capacity()?;
+        let id = self
+            .next
+            .checked_add(1)
+            .filter(|n| *n <= i64::MAX as u64)
+            .ok_or("process handle limit reached")?;
+        let pending = worker::submit(Box::new(move |cancel| request.prepare(cancel)))?;
+        self.next = id;
+        self.pending.insert(id, pending);
+        Ok(id)
+    }
+
     pub fn status(&mut self, id: u64) -> Result<Status, String> {
+        if let Some(pending) = self.pending.get_mut(&id) {
+            return Ok(pending.status());
+        }
         let child = self.children.get_mut(&id).ok_or("unknown process handle")?;
         Ok(Status {
             pid: child.id(),
             exit: child.try_wait().map_err(|e| e.to_string())?,
+            starting: false,
+            error: None,
         })
     }
 
     pub fn kill(&mut self, id: u64) -> Result<(), String> {
+        if let Some(pending) = self.pending.get_mut(&id) {
+            pending.kill();
+            return Ok(());
+        }
         let child = self.children.get_mut(&id).ok_or("unknown process handle")?;
         if child.try_wait().map_err(|e| e.to_string())?.is_none() {
             child.kill().map_err(|e| e.to_string())?;
@@ -90,10 +96,12 @@ impl Processes {
     }
 
     pub fn forget(&mut self, id: u64) -> Result<(), String> {
-        if self.status(id)?.exit.is_none() {
+        let status = self.status(id)?;
+        if status.exit.is_none() && status.error.is_none() {
             return Err("process still running".into());
         }
         self.children.remove(&id);
+        self.pending.remove(&id);
         Ok(())
     }
 
@@ -104,6 +112,7 @@ impl Processes {
     }
 
     pub fn stop_all(&mut self) {
+        self.pending.clear();
         let mut pending = Vec::new();
         for (_, mut child) in std::mem::take(&mut self.children) {
             if !matches!(child.try_wait(), Ok(Some(_))) {
@@ -125,6 +134,51 @@ impl Drop for Processes {
     fn drop(&mut self) {
         self.stop_all();
     }
+}
+
+fn spawn(
+    file: &str,
+    args: &[String],
+    cwd: Option<&str>,
+    env: &[(String, String)],
+) -> Result<Child, String> {
+    if env
+        .iter()
+        .any(|(key, value)| key.is_empty() || key.contains(['=', '\0']) || value.contains('\0'))
+    {
+        return Err("invalid process environment".into());
+    }
+    let mut cmd = Command::new(file);
+    cmd.args(args)
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .env_remove("OMSI_PLUGIN_PROCESS_ALLOW")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        let parent = std::process::id() as libc::pid_t;
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != parent {
+                    return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    let child = windows::spawn(&cmd).map_err(|e| e.to_string())?;
+    #[cfg(not(windows))]
+    let child = cmd.spawn().map_err(|e| e.to_string())?;
+    Ok(child)
 }
 
 #[cfg(test)]
@@ -181,9 +235,10 @@ mod tests {
     #[test]
     fn failed_start_does_not_allocate_a_handle() {
         let mut p = Processes::default();
-        assert!(p
-            .start("/nonexistent/openomsi-test-program", &[], None, &[])
-            .is_err());
+        assert!(
+            p.start("/nonexistent/openomsi-test-program", &[], None, &[])
+                .is_err()
+        );
         assert!(p.children.is_empty());
     }
     #[cfg(target_os = "linux")]

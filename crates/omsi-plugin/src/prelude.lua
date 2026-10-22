@@ -106,8 +106,8 @@ do
   end
 
   function omsi.process.wait(handle)
-    local code, state = poll(handle)
-    if state ~= "running" then return code, state end
+    local code, state, reason = poll(handle)
+    if state ~= "running" then return code, state, reason end
     if stopping then error("process.wait cannot suspend a stopping plugin", 2) end
     if coroutine.running() ~= active then
       error("process.wait requires managed plugin code, not a manually resumed coroutine", 2)
@@ -130,11 +130,11 @@ do
 
   function omsi._resume_process_wait()
     if not waiting then return false end
-    local code, state = poll(waiting.handle)
+    local code, state, reason = poll(waiting.handle)
     if state == "running" then return true end
     local task = waiting
     waiting = nil
-    resume_call(task.thread, code, state)
+    resume_call(task.thread, code, state, reason)
     while not waiting and #queue > 0 do
       local next_call = table.remove(queue, 1)
       omsi._managed_call(next_call.fn, table.unpack(next_call.args, 1, next_call.args.n))

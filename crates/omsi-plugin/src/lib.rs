@@ -1095,7 +1095,7 @@ impl Plugins {
             }
         }
         let mut lua = Vec::new();
-        let hub = std::rc::Rc::new(api::runtime::Hub { process_grants, ..Default::default() });
+        let hub = std::rc::Rc::new(api::runtime::Hub { process_grants: std::sync::Arc::new(process_grants), ..Default::default() });
         let ui = hub.ui.clone();
         let mut seen = std::collections::HashSet::new();
         for dir in dirs {

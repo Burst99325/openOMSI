@@ -77,7 +77,7 @@ pub struct Mail {
 #[derive(Default)]
 pub struct Hub {
     pub ui: SharedUi,
-    pub process_grants: super::process::ProcessGrants,
+    pub process_grants: std::sync::Arc<super::process::ProcessGrants>,
     pub mail: RefCell<Vec<Mail>>,
     /// The loaded plugins' names, in load order.
     pub names: RefCell<Vec<String>>,
@@ -96,7 +96,7 @@ pub fn emit_now(ctx: &mut Ctx<'_>, event: &str, args: Vec<Value>) {
 
 impl Hub {
     pub fn with_ui(ui: SharedUi) -> SharedHub {
-        Rc::new(Hub { ui, process_grants: super::process::ProcessGrants::from_env(), ..Default::default() })
+        Rc::new(Hub { ui, process_grants: std::sync::Arc::new(super::process::ProcessGrants::from_env()), ..Default::default() })
     }
 
     /// The messages waiting for plugin `name` (taken out).
