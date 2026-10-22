@@ -77,6 +77,7 @@ pub struct Mail {
 #[derive(Default)]
 pub struct Hub {
     pub ui: SharedUi,
+    pub process_grants: std::sync::Arc<super::process::ProcessGrants>,
     pub mail: RefCell<Vec<Mail>>,
     /// The loaded plugins' names, in load order.
     pub names: RefCell<Vec<String>>,
@@ -95,7 +96,7 @@ pub fn emit_now(ctx: &mut Ctx<'_>, event: &str, args: Vec<Value>) {
 
 impl Hub {
     pub fn with_ui(ui: SharedUi) -> SharedHub {
-        Rc::new(Hub { ui, ..Default::default() })
+        Rc::new(Hub { ui, process_grants: std::sync::Arc::new(super::process::ProcessGrants::from_env()), ..Default::default() })
     }
 
     /// The messages waiting for plugin `name` (taken out).
@@ -183,8 +184,10 @@ pub struct PluginState {
     pub tag: String,
     /// Its mark on its panels and sounds.
     pub owner: u64,
-    /// The permissions it declared; None: all (a plain `.lua` file, as ever).
+    /// The permissions it declared; native processes also need a host grant.
     pub perms: Option<HashSet<Perm>>,
+    pub(crate) process_allowed: bool,
+    pub(crate) process_entry: Option<PathBuf>,
     /// Where its own files are (`plugin.read`, images, sounds): None for none.
     pub folder: Option<PathBuf>,
     /// Its data folder (`storage`, `files`), made when first written.
@@ -213,6 +216,7 @@ pub struct PluginState {
     pub settings: super::fns::plugin::Settings,
     /// Sounds it started (stopped when it stops).
     pub voices: Vec<u64>,
+    pub processes: super::process::Processes,
 }
 
 impl PluginState {
@@ -223,6 +227,8 @@ impl PluginState {
             tag: format!("[{tag} {name}]"),
             owner,
             perms: None,
+            process_allowed: false,
+            process_entry: None,
             folder,
             data_dir,
             hub,
@@ -242,11 +248,12 @@ impl PluginState {
             sender: Default::default(),
             settings: Default::default(),
             voices: Vec::new(),
+            processes: Default::default(),
         }
     }
 
     pub fn allows(&self, p: Perm) -> bool {
-        self.perms.as_ref().is_none_or(|s| s.contains(&p))
+        (p != Perm::Process || self.process_allowed) && self.perms.as_ref().is_none_or(|s| s.contains(&p))
     }
 
     pub fn ui(&self) -> std::cell::RefMut<'_, crate::ui::UiState> {
@@ -278,6 +285,7 @@ impl PluginState {
             self.disabled = true;
         }
         if self.disabled {
+            self.processes.stop_all();
             // (its buttons would answer nothing any more)
             self.hub.ui.borrow_mut().remove_owner(self.owner);
         }
@@ -397,6 +405,7 @@ fn unit(ctx: &mut Ctx<'_>, f: impl FnOnce(&mut Ctx<'_>) -> Result<(), CallError>
 /// game's events, the messages of other plugins, the panels' focus, clicks and changes,
 /// then timers, watches, keys, the events worked out from what changed, and `frame`.
 pub fn frame(ctx: &mut Ctx<'_>) {
+    ctx.state().processes.poll();
     if ctx.state().disabled {
         return;
     }
@@ -623,6 +632,7 @@ pub fn stop(ctx: &mut Ctx<'_>) {
 /// What goes when a plugin goes, whether it stopped or failed to start: its storage is
 /// written, its sounds stop, its panels go and it leaves the list of plugins.
 pub fn finish(ctx: &mut Ctx<'_>) {
+    ctx.state().processes.stop_all();
     super::fns::storage::flush(ctx.state());
     let voices = std::mem::take(&mut ctx.state().voices);
     for v in voices {
