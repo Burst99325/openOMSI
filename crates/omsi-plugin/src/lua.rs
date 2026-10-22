@@ -211,7 +211,7 @@ impl LuaPlugin {
         let owner = NEXT_OWNER.fetch_add(1, Ordering::Relaxed);
         let mut state = PluginState::new(&spec.name, "Lua plugin", "lua", owner, hub, spec.folder.clone(), spec.data_dir.clone());
         state.perms = spec.perms.clone();
-        state.process_allowed = state.hub.process_grants.has_candidate(path, state.folder.as_deref());
+        state.process_allowed = state.hub.process_permissions.is_some() || state.hub.process_grants.has_candidate(path, state.folder.as_deref());
         state.process_entry = Some(path.to_path_buf());
         let mut p = LuaPlugin { name: spec.name.clone(), path: path.to_path_buf(), spec, binding: None, state: Box::new(state), slot: Rc::new(Cell::new(None)), stamp: None, last_check: None, disabled: false, start_pending: false };
         p.start(io)?;
@@ -344,7 +344,7 @@ impl LuaPlugin {
         let old = &self.state;
         let mut s = PluginState::new(&self.spec.name, "Lua plugin", "lua", old.owner, old.hub.clone(), self.spec.folder.clone(), self.spec.data_dir.clone());
         s.perms = self.spec.perms.clone();
-        s.process_allowed = s.hub.process_grants.has_candidate(&self.path, s.folder.as_deref());
+        s.process_allowed = s.hub.process_permissions.is_some() || s.hub.process_grants.has_candidate(&self.path, s.folder.as_deref());
         s.process_entry = Some(self.path.clone());
         self.state = Box::new(s);
         self.disabled = false;

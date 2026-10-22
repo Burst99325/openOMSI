@@ -21,6 +21,7 @@ pub(crate) mod pause;
 /// What a click on one of the screens asks of the game.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
+    ProcessPermission(u64, omsi_plugin::api::process::ProcessDecision),
     /// Line `k` of the game menu or of the open list, as Enter on it.
     Choose(usize),
     /// A line of the pause menu's rail chosen while a list is open over it: the list closes
@@ -43,6 +44,7 @@ pub(crate) enum Action {
 
 /// The screens' toolkit, their graphics and what was drawn last.
 pub(crate) struct Shell {
+    pub(crate) process_prompt: Option<u64>,
     pub(crate) ui: Ui,
     gpu: Option<(Gpu, wgpu::TextureFormat)>,
     shot_gpu: Option<Gpu>,
@@ -81,7 +83,7 @@ impl Shell {
         // (the desktop launcher's calm look: graphite surfaces, no edges)
         let mut ui = Ui::new();
         ui.flat = true;
-        Shell { ui, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
+        Shell { process_prompt: None, ui, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
     }
 
     /// A frame of the screens begins: the window's size in physical pixels and how many of

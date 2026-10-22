@@ -1,5 +1,7 @@
 mod grants;
 mod worker;
+mod permissions;
+pub use permissions::{ProcessDecision, ProcessPermissions, ProcessPrompt};
 pub use grants::{ProcessGrant, ProcessGrants};
 use std::collections::BTreeMap;
 #[cfg(not(windows))]
@@ -24,6 +26,7 @@ pub struct Status {
     pub pid: u32,
     pub exit: Option<ExitStatus>,
     pub starting: bool,
+    pub awaiting_permission: bool,
     pub error: Option<String>,
 }
 
@@ -64,7 +67,7 @@ impl Processes {
             .checked_add(1)
             .filter(|n| *n <= i64::MAX as u64)
             .ok_or("process handle limit reached")?;
-        let pending = worker::submit(Box::new(move |cancel| request.prepare(cancel)))?;
+        let pending = worker::submit_request(request)?;
         self.next = id;
         self.pending.insert(id, pending);
         Ok(id)
@@ -79,6 +82,7 @@ impl Processes {
             pid: child.id(),
             exit: child.try_wait().map_err(|e| e.to_string())?,
             starting: false,
+            awaiting_permission: false,
             error: None,
         })
     }

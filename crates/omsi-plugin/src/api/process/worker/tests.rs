@@ -160,6 +160,8 @@ fn admission_limits_precede_verification_and_the_global_queue_is_bounded() {
     grants.before_verify = Some(Arc::new(move || copy.wait()));
     let grants = Arc::new(grants);
     let request = || StartRequest {
+        permissions: None,
+        plugin: "test".into(),
         grants: grants.clone(),
         entry: entry.clone(),
         folder: Some(root.clone()),

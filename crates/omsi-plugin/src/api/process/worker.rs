@@ -1,22 +1,38 @@
-use super::{Child, ProcessGrants, Status};
+use super::{Child, ProcessGrant, ProcessGrants, ProcessPermissions, Status};
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex, OnceLock,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
     mpsc::{self, SyncSender},
 };
 use std::time::Duration;
 
 const WORKERS: usize = 2;
 const QUEUED: usize = 32;
+#[cfg(test)]
 type Prepare = Box<dyn FnOnce(&AtomicBool) -> Result<Child, String> + Send>;
 struct Job {
-    prepare: Prepare,
+    work: Work,
     control: Arc<Control>,
 }
 struct Finished {
-    result: Result<Child, String>,
+    result: Result<Stage, String>,
     control: Arc<Control>,
+}
+enum Work {
+    #[cfg(test)]
+    Native(Prepare),
+    Request(StartRequest),
+    Approved(Awaiting, bool),
+}
+enum Stage {
+    Ready(Child),
+    Waiting(Awaiting),
+}
+struct Awaiting {
+    request: StartRequest,
+    grant: ProcessGrant,
+    decision: Arc<AtomicU8>,
 }
 #[derive(Default)]
 struct Control {
@@ -48,6 +64,8 @@ impl Drop for Pending {
 }
 
 pub(crate) struct StartRequest {
+    pub permissions: Option<Arc<ProcessPermissions>>,
+    pub plugin: String,
     pub grants: Arc<ProcessGrants>,
     pub entry: PathBuf,
     pub folder: Option<PathBuf>,
@@ -57,7 +75,7 @@ pub(crate) struct StartRequest {
     pub env: Vec<(String, String)>,
 }
 impl StartRequest {
-    pub(super) fn prepare(self, cancel: &AtomicBool) -> Result<Child, String> {
+    fn prepare(self, cancel: &AtomicBool) -> Result<Stage, String> {
         #[cfg(test)]
         if let Some(before) = &self.grants.before_verify {
             before();
@@ -65,9 +83,57 @@ impl StartRequest {
         if cancel.load(Ordering::Acquire) {
             return Err("process start cancelled".into());
         }
-        let helper = self
+        let helper = match self
             .grants
-            .helper(&self.entry, self.folder.as_deref(), &self.file)?;
+            .helper(&self.entry, self.folder.as_deref(), &self.file)
+        {
+            Ok(helper) => helper,
+            Err(error) => {
+                let Some(permissions) = &self.permissions else {
+                    return Err(error);
+                };
+                match permissions.authorize(&self)? {
+                    super::permissions::Authorization::Granted(grant) => {
+                        return self.approved(grant, false, cancel);
+                    }
+                    super::permissions::Authorization::Pending(grant, decision) => {
+                        return Ok(Stage::Waiting(Awaiting {
+                            request: self,
+                            grant,
+                            decision,
+                        }));
+                    }
+                }
+            }
+        };
+        self.spawn(helper, cancel)
+    }
+    fn approved(
+        self,
+        grant: ProcessGrant,
+        always: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Stage, String> {
+        if cancel.load(Ordering::Acquire) {
+            return Err("process start cancelled".into());
+        }
+        let helper = ProcessGrants {
+            grants: vec![grant.clone()],
+            ..Default::default()
+        }
+        .helper(&self.entry, self.folder.as_deref(), &self.file)?;
+        if cancel.load(Ordering::Acquire) {
+            return Err("process start cancelled".into());
+        }
+        if always {
+            self.permissions
+                .as_ref()
+                .ok_or("process permissions unavailable")?
+                .remember(grant)?;
+        }
+        self.spawn(helper, cancel)
+    }
+    fn spawn(self, helper: PathBuf, cancel: &AtomicBool) -> Result<Stage, String> {
         if cancel.load(Ordering::Acquire) {
             return Err("process start cancelled".into());
         }
@@ -77,10 +143,18 @@ impl StartRequest {
             self.cwd.as_deref(),
             &self.env,
         )
+        .map(Stage::Ready)
     }
 }
 
+#[cfg(test)]
 pub(super) fn submit(prepare: Prepare) -> Result<Pending, String> {
+    enqueue(Work::Native(prepare))
+}
+pub(super) fn submit_request(request: StartRequest) -> Result<Pending, String> {
+    enqueue(Work::Request(request))
+}
+fn enqueue(work: Work) -> Result<Pending, String> {
     static POOL: OnceLock<Result<SyncSender<Job>, String>> = OnceLock::new();
     let pool = POOL.get_or_init(pool).as_ref().map_err(Clone::clone)?;
     let status = Status {
@@ -92,7 +166,7 @@ pub(super) fn submit(prepare: Prepare) -> Result<Pending, String> {
         ..Default::default()
     });
     pool.try_send(Job {
-        prepare,
+        work,
         control: control.clone(),
     })
     .map_err(|_| "process preparation queue is full or unavailable")?;
@@ -106,9 +180,10 @@ fn pool() -> Result<SyncSender<Job>, String> {
     let (send, receive) = mpsc::sync_channel::<Job>(QUEUED);
     let receive = Arc::new(Mutex::new(receive));
     let (finished, results) = mpsc::sync_channel::<Finished>(WORKERS);
+    let owner_jobs = send.clone();
     std::thread::Builder::new()
         .name("plugin-process-owner".into())
-        .spawn(move || own(results))
+        .spawn(move || owner::own(results, owner_jobs))
         .map_err(|e| e.to_string())?;
     for index in 0..WORKERS {
         let receive = receive.clone();
@@ -123,8 +198,14 @@ fn pool() -> Result<SyncSender<Job>, String> {
                     let result = if job.control.cancel.load(Ordering::Acquire) {
                         Err("process start cancelled".into())
                     } else {
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            (job.prepare)(&job.control.cancel)
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job.work {
+                            #[cfg(test)]
+                            Work::Native(prepare) => prepare(&job.control.cancel).map(Stage::Ready),
+                            Work::Request(request) => request.prepare(&job.control.cancel),
+                            Work::Approved(wait, always) => {
+                                wait.request
+                                    .approved(wait.grant, always, &job.control.cancel)
+                            }
                         }))
                         .unwrap_or_else(|_| Err("process preparation worker panicked".into()))
                     };
@@ -132,7 +213,7 @@ fn pool() -> Result<SyncSender<Job>, String> {
                         result,
                         control: job.control,
                     }) {
-                        if let Ok(mut child) = error.0.result {
+                        if let Ok(Stage::Ready(mut child)) = error.0.result {
                             let _ = child.kill();
                             let _ = child.wait();
                         }
@@ -144,51 +225,8 @@ fn pool() -> Result<SyncSender<Job>, String> {
     Ok(send)
 }
 
-fn own(results: mpsc::Receiver<Finished>) {
-    let mut children: Vec<(Child, Arc<Control>)> = Vec::new();
-    loop {
-        match results.recv_timeout(Duration::from_millis(5)) {
-            Ok(done) => match done.result {
-                Ok(mut child) => {
-                    if done.control.cancel.load(Ordering::Acquire) {
-                        let _ = child.kill();
-                    }
-                    *done.control.status.lock().unwrap() = Status {
-                        pid: child.id(),
-                        ..Default::default()
-                    };
-                    children.push((child, done.control));
-                }
-                Err(error) => {
-                    *done.control.status.lock().unwrap() = Status {
-                        error: Some(error),
-                        ..Default::default()
-                    }
-                }
-            },
-            Err(mpsc::RecvTimeoutError::Disconnected) if children.is_empty() => break,
-            Err(_) => {}
-        }
-        children.retain_mut(|(child, control)| {
-            if control.cancel.swap(false, Ordering::AcqRel)
-                || control.release.load(Ordering::Acquire)
-            {
-                let _ = child.kill();
-            }
-            match child.try_wait() {
-                Ok(exit) => {
-                    control.status.lock().unwrap().exit = exit;
-                    !(exit.is_some() && control.release.load(Ordering::Acquire))
-                }
-                Err(error) => {
-                    control.status.lock().unwrap().error = Some(error.to_string());
-                    let _ = child.kill();
-                    true
-                }
-            }
-        });
-    }
-}
+#[path = "worker/owner.rs"]
+mod owner;
 
 #[cfg(test)]
 mod tests;
