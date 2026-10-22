@@ -16,7 +16,7 @@ pub struct ProcessGrants {
     pub(super) before_verify: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessGrant {
     pub entry: PathBuf,

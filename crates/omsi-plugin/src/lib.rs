@@ -1077,6 +1077,15 @@ impl Plugins {
     }
 
     pub fn load_with_process_grants(dirs: &[PathBuf], hosts: &HostConfig, process_grants: api::process::ProcessGrants) -> Plugins {
+        Self::load_process_host(dirs, hosts, process_grants, None)
+    }
+
+    /// Interactive game hosts supply a broker whose requests only their trusted UI can answer.
+    pub fn load_with_process_permissions(dirs: &[PathBuf], hosts: &HostConfig, process_grants: api::process::ProcessGrants, permissions: std::sync::Arc<api::process::ProcessPermissions>) -> Plugins {
+        Self::load_process_host(dirs, hosts, process_grants, Some(permissions))
+    }
+
+    fn load_process_host(dirs: &[PathBuf], hosts: &HostConfig, process_grants: api::process::ProcessGrants, process_permissions: Option<std::sync::Arc<api::process::ProcessPermissions>>) -> Plugins {
         let mut loaded: Vec<Plugin> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for dir in dirs {
@@ -1095,7 +1104,7 @@ impl Plugins {
             }
         }
         let mut lua = Vec::new();
-        let hub = std::rc::Rc::new(api::runtime::Hub { process_grants: std::sync::Arc::new(process_grants), ..Default::default() });
+        let hub = std::rc::Rc::new(api::runtime::Hub { process_grants: std::sync::Arc::new(process_grants), process_permissions, ..Default::default() });
         let ui = hub.ui.clone();
         let mut seen = std::collections::HashSet::new();
         for dir in dirs {

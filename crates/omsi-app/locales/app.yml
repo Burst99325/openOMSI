@@ -70847,3 +70847,63 @@ _version: 2
   sv: "Rensa alla ruttpunkter"
   sr: "Obriši sve putne tačke"
   ka: "ყველა შუალედური წერტილის წაშლა"
+
+"Plugin process permission":
+  hu: "Pluginfolyamat engedélyezése"
+  de: "Prozessberechtigung für Plugin"
+  fr: "Autorisation de processus du plugin"
+
+"Plugin:":
+  hu: "Plugin:"
+  de: "Plugin:"
+  fr: "Plugin :"
+
+"This plugin wants to run the following file:":
+  hu: "Ez a plugin a következő fájlt szeretné futtatni:"
+  de: "Dieses Plugin möchte die folgende Datei ausführen:"
+  fr: "Ce plugin souhaite exécuter le fichier suivant :"
+
+"Plugin entry:":
+  hu: "Plugin belépési fájlja:"
+  de: "Plugin-Einstiegsdatei:"
+  fr: "Fichier principal du plugin :"
+
+"Arguments:":
+  hu: "Argumentumok:"
+  de: "Argumente:"
+  fr: "Arguments :"
+
+"Working directory:":
+  hu: "Munkakönyvtár:"
+  de: "Arbeitsverzeichnis:"
+  fr: "Dossier de travail :"
+
+"Inherited from the game":
+  hu: "A játék munkakönyvtára"
+  de: "Vom Spiel übernommen"
+  fr: "Hérité du jeu"
+
+"This program runs with your account's permissions. Only allow programs you trust.":
+  hu: "Ez a program a felhasználói fiókod jogosultságaival fut. Csak megbízható programokat engedélyezz."
+  de: "Dieses Programm läuft mit den Rechten deines Benutzerkontos. Erlaube nur Programme, denen du vertraust."
+  fr: "Ce programme utilise les droits de votre compte. Autorisez uniquement les programmes auxquels vous faites confiance."
+
+"Allow once permits this launch. Always allow remembers this plugin and file until their content changes. Deny blocks this file for this session.":
+  hu: "Az Egyszer engedélyezem csak ezt az indítást engedi. A Mindig engedélyezem megjegyzi a plugint és a fájlt, amíg a tartalmuk meg nem változik. A Megtagadom letiltja ezt a fájlt a játék bezárásáig."
+  de: "Einmal erlauben gilt nur für diesen Start. Immer erlauben merkt sich dieses Plugin und diese Datei, bis sich ihr Inhalt ändert. Ablehnen blockiert diese Datei für diese Sitzung."
+  fr: "Autoriser une fois permet ce lancement. Toujours autoriser mémorise ce plugin et ce fichier jusqu’à modification de leur contenu. Refuser bloque ce fichier pour cette session."
+
+"Allow once":
+  hu: "Egyszer engedélyezem"
+  de: "Einmal erlauben"
+  fr: "Autoriser une fois"
+
+"Always allow":
+  hu: "Mindig engedélyezem"
+  de: "Immer erlauben"
+  fr: "Toujours autoriser"
+
+"Deny":
+  hu: "Megtagadom"
+  de: "Ablehnen"
+  fr: "Refuser"

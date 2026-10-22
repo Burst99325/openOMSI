@@ -78,6 +78,7 @@ pub struct Mail {
 pub struct Hub {
     pub ui: SharedUi,
     pub process_grants: std::sync::Arc<super::process::ProcessGrants>,
+    pub process_permissions: Option<std::sync::Arc<super::process::ProcessPermissions>>,
     pub mail: RefCell<Vec<Mail>>,
     /// The loaded plugins' names, in load order.
     pub names: RefCell<Vec<String>>,
