@@ -2,6 +2,7 @@
 use omsi_plugin::api::process::{ProcessDecision, ProcessPrompt};
 mod dialog;
 use dialog::draw;
+pub(crate) use dialog::DialogState;
 
 #[cfg(test)]
 mod tests;
@@ -72,6 +73,7 @@ impl crate::App {
     pub(crate) fn frame_process_permission(&mut self, dt: f32) -> bool {
         let Some(prompt) = self.process_permission_prompt() else {
             if self.shell.process_prompt.take().is_some() {
+                self.shell.process_dialog = Default::default();
                 self.shell.clear();
                 self.sync_mouse_grab();
             }
@@ -82,6 +84,7 @@ impl crate::App {
         };
         let (w, h) = (surface.config.width as f32, surface.config.height as f32);
         if self.shell.process_prompt != Some(prompt.id) {
+            self.shell.process_dialog = Default::default();
             self.shell.process_prompt = Some(prompt.id);
             // A click/key intended for the bus must never turn into consent as it opens.
             self.shell.ui.discard_input();
@@ -115,7 +118,7 @@ impl crate::App {
             );
         self.shell.begin(w, h, scale, dt);
         self.shell.opaque = false;
-        if let Some(decision) = draw(&mut self.shell.ui, &prompt) {
+        if let Some(decision) = draw(&mut self.shell.ui, &prompt, &mut self.shell.process_dialog) {
             self.shell
                 .actions
                 .push(crate::shell::Action::ProcessPermission(prompt.id, decision));
