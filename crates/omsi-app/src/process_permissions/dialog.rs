@@ -2,6 +2,47 @@ use glam::Vec2;
 use omsi_plugin::api::process::{ProcessDecision, ProcessPrompt};
 use omsi_ui::{Color, Rect, Weight, kit::ButtonKind, paint::Align, theme::*};
 
+#[derive(Default)]
+pub(crate) struct DialogState {
+    prompt: Option<u64>,
+    pub(super) expanded: bool,
+}
+
+pub(super) const SUMMARY: &str = "Plugin {plugin} wants to run {app} with {count} argument(s).";
+
+pub(super) fn summary(prompt: &ProcessPrompt, tr: impl Fn(&str) -> String) -> String {
+    let app = prompt
+        .file
+        .file_name()
+        .unwrap_or(prompt.file.as_os_str())
+        .to_string_lossy();
+    let values = [
+        ("plugin", clean(&prompt.plugin)),
+        ("app", clean(&app)),
+        ("count", prompt.args.len().to_string()),
+    ];
+    // Substitute only the template: braces inside a plugin name stay literal.
+    let template = tr(SUMMARY);
+    let mut result = String::new();
+    for (i, part) in template.split('{').enumerate() {
+        if i == 0 {
+            result.push_str(part);
+            continue;
+        }
+        if let Some((value, tail)) = values.iter().find_map(|(key, value)| {
+            part.strip_prefix(&format!("{key}}}"))
+                .map(|tail| (value, tail))
+        }) {
+            result.push_str(value);
+            result.push_str(tail);
+        } else {
+            result.push('{');
+            result.push_str(part);
+        }
+    }
+    result
+}
+
 fn clean(text: &str) -> String {
     text.chars()
         .flat_map(|c| {
@@ -37,10 +78,8 @@ fn wrapped(ui: &omsi_ui::kit::Ui, text: &str, width: f32) -> String {
 // Translate only interface text, never plugin names, paths or arguments.
 pub(super) fn details(prompt: &ProcessPrompt, tr: impl Fn(&str) -> String) -> String {
     format!(
-        "{} {}\n\n{}\n{}\n\n{} {}\n\n{} {}\n{} {}\n\n{}\n{}",
-        tr("Plugin:"),
-        clean(&prompt.plugin),
-        tr("This plugin wants to run the following file:"),
+        "{}\n{}\n\n{} {}\n\n{} {}\n{} {}",
+        tr("Application path:"),
         clean(&prompt.file.to_string_lossy()),
         tr("Plugin entry:"),
         clean(&prompt.entry.to_string_lossy()),
@@ -51,14 +90,34 @@ pub(super) fn details(prompt: &ProcessPrompt, tr: impl Fn(&str) -> String) -> St
             .cwd
             .as_deref()
             .map(clean)
-            .unwrap_or_else(|| tr("Inherited from the game")),
-        tr("This program runs with your account's permissions. Only allow programs you trust."),
-        tr(
-            "Allow once permits this launch. Always allow remembers this plugin and file until their content changes. Deny blocks this file for this session."
-        )
+            .unwrap_or_else(|| tr("Inherited from the game"))
     )
 }
-pub(super) fn draw(ui: &mut omsi_ui::kit::Ui, prompt: &ProcessPrompt) -> Option<ProcessDecision> {
+pub(super) fn content(
+    prompt: &ProcessPrompt,
+    expanded: bool,
+    tr: impl Fn(&str) -> String,
+) -> String {
+    let mut text = summary(prompt, &tr);
+    if expanded {
+        text.push_str("\n\n");
+        text.push_str(&details(prompt, &tr));
+    }
+    text.push_str(&format!("\n\n{}\n\n{}",
+        tr("This program runs with your account's permissions. Only allow programs you trust."),
+        tr("Allow once permits this launch. Always allow remembers this plugin and file until their content changes. Deny blocks this file for this session.")));
+    text
+}
+
+pub(super) fn draw(
+    ui: &mut omsi_ui::kit::Ui,
+    prompt: &ProcessPrompt,
+    state: &mut DialogState,
+) -> Option<ProcessDecision> {
+    if state.prompt != Some(prompt.id) {
+        state.prompt = Some(prompt.id);
+        state.expanded = false;
+    }
     let screen = Rect::new(0.0, 0.0, ui.size.x, ui.size.y);
     ui.solid(screen);
     ui.p().rect(screen, Color([0.0, 0.0, 0.0, 0.65]));
@@ -67,24 +126,28 @@ pub(super) fn draw(ui: &mut omsi_ui::kit::Ui, prompt: &ProcessPrompt) -> Option<
     let r = Rect::new((ui.size.x - w) * 0.5, (ui.size.y - h) * 0.5, w, h);
     let narrow = w < 480.0;
     ui.panel(r);
+    let mut title_size = if narrow { 14.0 } else { 21.0 };
+    while title_size > 10.0 && ui.width("Plugin process permission", title_size, Weight::Bold) > r.w - 40.0 {
+        title_size -= 0.5;
+    }
     ui.text(
         "Plugin process permission",
         Vec2::new(r.x + 20.0, r.y + 32.0),
-        if narrow { 14.0 } else { 21.0 },
+        title_size,
         Weight::Bold,
         TEXT,
         Align::Left,
     );
-    let footer = if narrow { 132.0 } else { 52.0 };
+    let footer = if narrow { 132.0 } else { 92.0 };
     let area = Rect::new(r.x + 20.0, r.y + 48.0, r.w - 40.0, r.h - footer - 60.0);
-    let details = details(prompt, |key| omsi_ui::tr(key).into_owned());
-    let details = wrapped(ui, &details, area.w - 20.0);
+    let content = content(prompt, state.expanded, |key| omsi_ui::tr(key).into_owned());
+    let content = wrapped(ui, &content, area.w - 20.0);
     ui.scroll_area(
-        &format!("process-details-{}", prompt.id),
+        &format!("process-details-{}-{}", prompt.id, state.expanded),
         area,
         &mut |ui, body| {
             ui.paragraph_as_is(
-                &details,
+                &content,
                 Vec2::new(body.x, body.y),
                 body.w - 16.0,
                 14.0,
@@ -93,6 +156,24 @@ pub(super) fn draw(ui: &mut omsi_ui::kit::Ui, prompt: &ProcessPrompt) -> Option<
             )
         },
     );
+    if ui.button(
+        &format!("process-{}-details", prompt.id),
+        Rect::new(
+            r.x + 20.0,
+            r.y + r.h - footer,
+            r.w - 40.0,
+            if narrow { 24.0 } else { 32.0 },
+        ),
+        if state.expanded {
+            "Hide details"
+        } else {
+            "Details"
+        },
+        None,
+        ButtonKind::Normal,
+    ) {
+        state.expanded = !state.expanded;
+    }
     let bw = if narrow {
         r.w - 40.0
     } else {
@@ -117,9 +198,9 @@ pub(super) fn draw(ui: &mut omsi_ui::kit::Ui, prompt: &ProcessPrompt) -> Option<
             &format!("process-{}-{i}", prompt.id),
             Rect::new(
                 r.x + 20.0 + if narrow { 0.0 } else { (bw + 8.0) * i as f32 },
-                r.y + r.h - footer + if narrow { 40.0 * i as f32 } else { 0.0 },
+                r.y + r.h - footer + if narrow { 32.0 + 28.0 * i as f32 } else { 40.0 },
                 bw,
-                32.0,
+                if narrow { 24.0 } else { 32.0 },
             ),
             label,
             None,
