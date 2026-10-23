@@ -105,7 +105,7 @@ pub(super) fn content(
     }
     text.push_str(&format!("\n\n{}\n\n{}",
         tr("This program runs with your account's permissions. Only allow programs you trust."),
-        tr("Allow once permits this launch. Always allow remembers this plugin and file until their content changes. Deny blocks this file for this session.")));
+        tr("Allow once permits this launch. Always allow remembers this plugin and file until their content changes. Deny blocks all native helpers for this plugin for this session.")));
     text
 }
 

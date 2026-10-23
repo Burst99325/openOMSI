@@ -40,31 +40,21 @@ struct Saved {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct DenialKey {
     entry: PathBuf,
-    helper: String,
 }
 impl DenialKey {
     // entry is canonical before this is called; no filesystem work in respond().
-    fn new(entry: &Path, helper: &str) -> Self {
+    fn new(entry: &Path) -> Self {
         let mut key = Self {
             entry: entry.to_path_buf(),
-            helper: helper.to_owned(),
         };
         #[cfg(windows)]
         {
             key.entry = PathBuf::from(key.entry.as_os_str().to_string_lossy().to_ascii_lowercase());
-            key.helper.make_ascii_lowercase();
         }
         key
     }
     fn grant(grant: &ProcessGrant) -> Self {
-        Self::new(
-            &grant.entry,
-            grant
-                .helpers
-                .keys()
-                .next()
-                .expect("permission prompt has one helper"),
-        )
+        Self::new(&grant.entry)
     }
 }
 
@@ -151,11 +141,8 @@ impl ProcessPermissions {
         }
         accepted
     }
-    pub(super) fn check_denied(&self, entry: &Path, helper: &str) -> Result<(), String> {
-        let key = DenialKey::new(
-            &entry.canonicalize().map_err(|e| e.to_string())?,
-            &super::super::paths::clean(helper)?,
-        );
+    pub(super) fn check_denied(&self, entry: &Path) -> Result<(), String> {
+        let key = DenialKey::new(&entry.canonicalize().map_err(|e| e.to_string())?);
         self.check_key(&key)
     }
     fn check_key(&self, key: &DenialKey) -> Result<(), String> {
@@ -174,7 +161,7 @@ impl ProcessPermissions {
             .or_else(|| request.entry.parent())
             .ok_or("no plugin folder")?;
         let clean = super::super::paths::clean(&request.file)?;
-        self.check_denied(&request.entry, &clean)?;
+        self.check_denied(&request.entry)?;
         let grant = ProcessGrant::capture(&request.entry, folder, &[clean.clone()])?;
         // Capture validates the folder and helper type. Resolve the helper again to reject
         // entry/helper changes between snapshot and publishing the request.

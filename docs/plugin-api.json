@@ -2791,7 +2791,7 @@
     {
       "name": "process.exit_code",
       "group": "process",
-      "since": "0.3.40",
+      "since": "unreleased",
       "doc": "Nonblocking exit code lookup (queued verification also counts as running): `nil, \"running\"` while running; `code, \"exited\"` after normal exit. A nonzero code is retained. Signal termination returns `nil, \"exited\"`; inspect `process.status` for details. Preparation failure returns `nil, \"failed\", reason`. An unknown handle returns `nil` and a reason.",
       "params": [
         {
@@ -2807,7 +2807,7 @@
     {
       "name": "process.forget",
       "group": "process",
-      "since": "0.3.40",
+      "since": "unreleased",
       "doc": "Release a completed or failed process handle and its retained result. A running process cannot be forgotten. On Windows, closing its job also terminates any remaining descendants.",
       "params": [
         {
@@ -2823,7 +2823,7 @@
     {
       "name": "process.kill",
       "group": "process",
-      "since": "0.3.40",
+      "since": "unreleased",
       "doc": "Cancel a queued start or request termination of a plugin-owned direct child without waiting. Poll `process.status` for completion; Windows also terminates the job descendants, Unix targets only the direct child.",
       "params": [
         {
@@ -2839,8 +2839,8 @@
     {
       "name": "process.start",
       "group": "process",
-      "since": "0.3.40",
-      "doc": "Queue a native helper without waiting; return a reserved handle immediately. The interactive game asks the player with Allow once, Always allow or Deny unless the exact content was already approved. Embedded hosts without a permission broker remain default-deny. Verification and OS process creation run on two shared workers with at most 32 globally queued starts. The 32-handle plugin limit (including queued and failed starts) is checked before admission. A full queue returns nil and a reason. Accepted starts can fail later: inspect status.error or exit_code/wait returning nil, failed, reason. `file` must be a relative path inside the plugin folder. Approval is bound to the entry, folder snapshot and helper SHA256. Allow once covers one launch; Always allow saves consent in the host user settings; Deny blocks this canonical plugin entry/helper name for the current session, including changed content or arguments. Changed content needs new approval. While the dialog is open, preparation workers and child cleanup keep running. The entry, executable-content snapshot (including importable Lua modules and native libraries), and helper hashes are rechecked on the worker immediately before each start; code changes revoke consent, while ordinary save/data writes do not. `args` are separate literal strings without shell expansion. Options: `cwd` and `env` (string overrides, other variables inherited, except OMSI_PLUGIN_PROCESS_ALLOW is always removed). Standard streams are disconnected. Windows helpers must be .exe files. At most 32 handles per plugin; forget completed handles. Stop, disable and reload terminate children; Windows job objects also terminate descendants and survive abrupt game exit, Linux uses a parent-death signal for direct children. No native helper runs before player approval. OMSI_PLUGIN_PROCESS_ALLOW can optionally name an absolute JSON grant manifest for preapproved content. Packages must also declare process. Unload/reload cancels unanswered requests. Approved helpers run with the game account's permissions.",
+      "since": "unreleased",
+      "doc": "Queue a native helper without waiting; return a reserved handle immediately. The interactive game asks the player with Allow once, Always allow or Deny unless the exact content was already approved. Embedded hosts without a permission broker remain default-deny. Verification and OS process creation run on two shared workers with at most 32 globally queued starts. The 32-handle plugin limit (including queued and failed starts) is checked before admission. A full queue returns nil and a reason. Accepted starts can fail later: inspect status.error or exit_code/wait returning nil, failed, reason. `file` must be a relative path inside the plugin folder. Approval is bound to the entry, folder snapshot and helper SHA256. Allow once covers one launch; Always allow saves consent in the host user settings; Deny blocks all native helpers for this canonical plugin entry for the current session, including renamed helpers or changed content or arguments. Changed content needs new approval. While the dialog is open, preparation workers and child cleanup keep running. The entry, executable-content snapshot (including importable Lua modules and native libraries), and helper hashes are rechecked on the worker immediately before each start; code changes revoke consent, while ordinary save/data writes do not. `args` are separate literal strings without shell expansion. Options: `cwd` and `env` (string overrides, other variables inherited, except OMSI_PLUGIN_PROCESS_ALLOW is always removed). Standard streams are disconnected. Windows helpers must be .exe files. At most 32 handles per plugin; forget completed handles. Stop, disable and reload terminate children; Windows job objects also terminate descendants and survive abrupt game exit, Linux uses a parent-death signal for direct children. No native helper runs before player approval. OMSI_PLUGIN_PROCESS_ALLOW can optionally name an absolute JSON grant manifest for preapproved content. Packages must also declare process. Unload/reload cancels unanswered requests. Approved helpers run with the game account's permissions.",
       "params": [
         {
           "name": "file",
@@ -2865,7 +2865,7 @@
     {
       "name": "process.status",
       "group": "process",
-      "since": "0.3.40",
+      "since": "unreleased",
       "doc": "Nonblocking status: `{pid, starting, awaiting_permission, running, exited, failed, error, code, success, signal}`. While verification/start is pending, starting and running are true and pid is nil. Failed preparation sets failed/error without an exit code. While running `code`, `success` and `signal` are nil. After exit `code` is the exit code (including nonzero); termination by a signal has no code, and `signal` is available on Unix. Results remain readable until forgotten.",
       "params": [
         {
@@ -2881,7 +2881,7 @@
     {
       "name": "process.wait",
       "group": "process",
-      "since": "0.3.40",
+      "since": "unreleased",
       "doc": "Lua: suspend this plugin through queued verification/start and until its direct child exits, then return `code, \"exited\"` (nonzero codes retained; nil code on signal exit). The game and other plugins keep running; no game-thread wait occurs. Works in the main chunk, start/frame/event handlers and timers. Queued callbacks resume afterwards (limit 256), and normal frames/timers pause during the wait. Stop/reload cancels the continuation and terminates the child. A nested `emit` callback or manually resumed coroutine cannot suspend. Preparation failure returns `nil, \"failed\", reason`. Other language bindings should poll `process.exit_code` instead.",
       "params": [
         {
