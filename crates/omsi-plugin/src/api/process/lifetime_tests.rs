@@ -1,9 +1,12 @@
-use omsi_plugin::api::process::Processes;
+use super::Processes;
 use std::{
     path::Path,
     process::Command,
     time::{Duration, Instant},
 };
+
+const LIFETIME_FIXTURE: &str = "api::process::lifetime_tests::lifetime_fixture";
+const ARGUMENT_FIXTURE: &str = "api::process::lifetime_tests::argument_fixture";
 
 #[test]
 #[ignore = "subprocess fixture"]
@@ -12,7 +15,7 @@ fn lifetime_fixture() {
     let root = Path::new(&root);
     let role = std::env::var("PLUGIN_LIFETIME_ROLE").unwrap();
     let exe = std::env::current_exe().unwrap();
-    let args = ["--exact", "lifetime_fixture", "--ignored"].map(str::to_owned);
+    let args = ["--exact", LIFETIME_FIXTURE, "--ignored"].map(str::to_owned);
     if role == "parent" {
         let mut processes = Processes::default();
         let id = processes
@@ -79,7 +82,7 @@ fn abrupt_parent_exit_kills_helpers() {
     let root = std::env::temp_dir().join(format!("omsi-lifetime-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let mut parent = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "lifetime_fixture", "--ignored"])
+        .args(["--exact", LIFETIME_FIXTURE, "--ignored"])
         .env("PLUGIN_LIFETIME_ROOT", &root)
         .env("PLUGIN_LIFETIME_ROLE", "parent")
         .spawn()
@@ -132,7 +135,7 @@ fn argument_fixture() {
     );
     assert!(std::env::var_os("OMSI_PLUGIN_PROCESS_ALLOW").is_none());
     assert_eq!(
-        std::env::current_dir().unwrap(),
+        std::env::current_dir().unwrap().canonicalize().unwrap(),
         Path::new(&std::env::var_os("PLUGIN_EXPECTED_CWD").unwrap())
             .canonicalize()
             .unwrap()
@@ -144,10 +147,12 @@ fn argument_fixture() {
 fn literal_arguments_environment_and_working_directory() {
     let mut processes = Processes::default();
     let exe = std::env::current_exe().unwrap();
-    let cwd = std::env::temp_dir().canonicalize().unwrap();
+    // Use a normal absolute cwd. A verbatim \\?\ cwd can hang loader initialization
+    // for this unit-test executable on Windows, independently of the process API.
+    let cwd = std::env::temp_dir();
     let mut args = vec![
         "--exact".into(),
-        "argument_fixture".into(),
+        ARGUMENT_FIXTURE.into(),
         "--ignored".into(),
     ];
     let mut expected = Vec::new();

@@ -33,7 +33,8 @@ impl ProcessGrant {
         }
         let entry = entry.canonicalize().map_err(|e| e.to_string())?;
         let folder = folder.canonicalize().map_err(|e| e.to_string())?;
-        let files = snapshot(&folder)?;
+        let names: std::collections::BTreeSet<String> = helpers.iter().map(|name| super::super::paths::clean(name)).collect::<Result<_, _>>()?;
+        let files = super::content::snapshot(&entry, &folder, &names)?;
         let mut allowed = BTreeMap::new();
         for name in helpers {
             let name = super::super::paths::clean(name)?;
@@ -62,7 +63,7 @@ impl ProcessGrant {
         entry.canonicalize().ok().as_ref() == Some(&self.entry)
             && folder.canonicalize().ok().as_ref() == Some(&self.folder)
             && hash(entry).is_ok_and(|h| h == self.sha256)
-            && snapshot(&self.folder).is_ok_and(|files| files == self.files)
+            && super::content::snapshot(&self.entry, &self.folder, &self.helpers.keys().cloned().collect()).is_ok_and(|files| files == self.files)
     }
 }
 
@@ -152,7 +153,7 @@ impl ProcessGrants {
     }
 }
 
-fn hash(path: &Path) -> Result<String, String> {
+pub(super) fn hash(path: &Path) -> Result<String, String> {
     if !path.is_file() {
         return Err("not a regular file".into());
     }
@@ -171,48 +172,6 @@ fn hash(path: &Path) -> Result<String, String> {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
-}
-
-fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
-    let mut files = BTreeMap::new();
-    let mut pending = vec![root.to_path_buf()];
-    let mut count = 0;
-    let mut total = 0;
-    while let Some(dir) = pending.pop() {
-        for item in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-            let item = item.map_err(|e| e.to_string())?;
-            let meta = std::fs::symlink_metadata(item.path()).map_err(|e| e.to_string())?;
-            count += 1;
-            total += meta.len();
-            if count > 4096 || total > 256 * 1024 * 1024 {
-                return Err("plugin grant exceeds 4096 entries or 256 MiB".into());
-            }
-            if meta.file_type().is_symlink() || (!meta.is_file() && !meta.is_dir()) {
-                return Err("plugin grants cannot include symlinks or special files".into());
-            }
-            if !item
-                .path()
-                .canonicalize()
-                .map_err(|e| e.to_string())?
-                .starts_with(root)
-            {
-                return Err("plugin folder contains a path escaping its root".into());
-            }
-            if meta.is_dir() {
-                pending.push(item.path());
-            } else {
-                let path = item.path();
-                let name = path
-                    .strip_prefix(root)
-                    .map_err(|e| e.to_string())?
-                    .to_str()
-                    .ok_or("plugin paths must be UTF-8")?
-                    .replace('\\', "/");
-                files.insert(name, hash(&path)?);
-            }
-        }
-    }
-    Ok(files)
 }
 
 #[cfg(test)]
@@ -286,6 +245,68 @@ mod tests {
         std::fs::remove_file(root.join("modules/code.lua")).unwrap();
         assert!(!grants.allows(&entry, Some(&root)));
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn mutable_saves_data_and_unrelated_shared_assets_do_not_revoke_consent() {
+        let (root, entry, grants) = fixture();
+        for name in ["plugin.save.lua", "other.save.lua", "plugin.data/cache.json", "other.data/large.bin", "data/status.txt", "other/assets/picture.bmp", "other.exe"] {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "normal writable data").unwrap();
+        }
+        assert!(grants.helper(&entry, Some(&root), "helper.exe").is_ok());
+        // Shared Lua remains part of the trust boundary: require can load it.
+        std::fs::write(root.join("other.lua"), "return 9").unwrap();
+        assert!(!grants.allows(&entry, Some(&root)));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn folder_data_is_mutable_but_importable_lua_and_native_libraries_are_hashed() {
+        use crate::lua::LuaSource;
+        let (root, old_entry, _) = fixture();
+        let entry = root.join("main.lua");
+        std::fs::rename(old_entry, &entry).unwrap();
+        std::fs::create_dir(root.join("data")).unwrap();
+        std::fs::write(root.join("data/module.lua"), "return 5").unwrap();
+        std::fs::write(root.join("helper.dll"), "native code").unwrap();
+        std::fs::write(root.join("config.xml"), "immutable package asset").unwrap();
+        let grant = ProcessGrant::capture(&entry, &root, &["helper.exe".into()]).unwrap();
+        assert!(crate::lua::DiskSource { path: entry.clone() }.module("data.module").is_some());
+        let grants = ProcessGrants { grants: vec![grant], ..Default::default() };
+        std::fs::write(root.join("data.save.lua"), "return { counter = 1 }").unwrap();
+        std::fs::write(root.join("data/state.json"), "{\"counter\":1}").unwrap();
+        assert!(grants.allows(&entry, Some(&root)));
+        for name in ["data/module.lua", "helper.dll", "config.xml"] {
+            let path = root.join(name);
+            let original = std::fs::read(&path).unwrap();
+            std::fs::write(&path, "changed executable content or package asset").unwrap();
+            assert!(!grants.allows(&entry, Some(&root)), "{name}");
+            std::fs::write(path, original).unwrap();
+        }
+        std::fs::write(root.join("data/new.lua"), "return 8").unwrap();
+        assert!(!grants.allows(&entry, Some(&root)));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn ignored_data_does_not_use_the_code_file_or_byte_budget() {
+        let (root, entry, grants) = fixture();
+        let data = root.join("plugin.data");
+        std::fs::create_dir(&data).unwrap();
+        for i in 0..4100 { std::fs::write(data.join(format!("{i}.json")), "{}").unwrap(); }
+        std::fs::File::create(data.join("large.bin")).unwrap().set_len(257 * 1024 * 1024).unwrap();
+        assert!(grants.allows(&entry, Some(&root)));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn shared_folder_keeps_importable_code_and_native_libraries_in_consent() {
+        for name in ["data/code.lua", "plugin.data/code.lua", "shared/other.lua", "helper.dll", "lib/loader.so.1", "lib/loader.dylib"] {
+            let (root, entry, grants) = fixture();
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "new executable content").unwrap();
+            assert!(!grants.allows(&entry, Some(&root)), "{name}");
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     #[cfg(windows)]
     #[test]

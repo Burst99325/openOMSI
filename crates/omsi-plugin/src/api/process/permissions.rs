@@ -1,7 +1,10 @@
 //! Host-owned process consent. Plugins can request execution but cannot answer prompts.
 use super::{ProcessGrant, ProcessGrants, worker::StartRequest};
-use std::collections::VecDeque;
-use std::path::PathBuf;
+#[cfg(test)]
+#[path = "permissions_tests.rs"]
+mod tests;
+use std::collections::{BTreeSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex, Weak,
     atomic::{AtomicU8, AtomicU64, Ordering},
@@ -34,12 +37,43 @@ struct Saved {
     grants: Vec<ProcessGrant>,
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct DenialKey {
+    entry: PathBuf,
+    helper: String,
+}
+impl DenialKey {
+    // entry is canonical before this is called; no filesystem work in respond().
+    fn new(entry: &Path, helper: &str) -> Self {
+        let mut key = Self {
+            entry: entry.to_path_buf(),
+            helper: helper.to_owned(),
+        };
+        #[cfg(windows)]
+        {
+            key.entry = PathBuf::from(key.entry.as_os_str().to_string_lossy().to_ascii_lowercase());
+            key.helper.make_ascii_lowercase();
+        }
+        key
+    }
+    fn grant(grant: &ProcessGrant) -> Self {
+        Self::new(
+            &grant.entry,
+            grant
+                .helpers
+                .keys()
+                .next()
+                .expect("permission prompt has one helper"),
+        )
+    }
+}
+
 /// One game's permission broker. `path` belongs to the host's user settings, never a
 /// plugin directory. A host that does not install this broker remains default-deny.
 pub struct ProcessPermissions {
     path: Option<PathBuf>,
     saved: Mutex<Saved>,
-    denied: Mutex<Vec<ProcessGrant>>,
+    denied: Mutex<BTreeSet<DenialKey>>,
     pending: Mutex<VecDeque<Pending>>,
     next: AtomicU64,
 }
@@ -52,7 +86,7 @@ impl ProcessPermissions {
         Self {
             path,
             saved: Mutex::new(Saved::default()),
-            denied: Mutex::new(Vec::new()),
+            denied: Mutex::new(BTreeSet::new()),
             pending: Mutex::new(VecDeque::new()),
             next: AtomicU64::new(1),
         }
@@ -82,14 +116,56 @@ impl ProcessPermissions {
         let Ok(pending) = self.pending.try_lock() else {
             return false;
         };
-        pending
-            .iter()
-            .find(|p| p.prompt.id == id)
-            .and_then(|p| p.decision.upgrade())
-            .is_some_and(|d| {
-                d.compare_exchange(0, choice as u8, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-            })
+        let Some(request) = pending.iter().find(|p| p.prompt.id == id) else {
+            return false;
+        };
+        let mut denied = if choice == ProcessDecision::Deny {
+            let Ok(denied) = self.denied.try_lock() else {
+                return false;
+            };
+            Some(denied)
+        } else {
+            None
+        };
+        let accepted = request.decision.upgrade().is_some_and(|d| {
+            d.compare_exchange(0, choice as u8, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        });
+        if accepted {
+            if let Some(denied) = denied.as_mut() {
+                let key = DenialKey::grant(&request.grant);
+                if denied.len() < 256 {
+                    denied.insert(key.clone());
+                }
+                for p in pending.iter().filter(|p| DenialKey::grant(&p.grant) == key) {
+                    if let Some(d) = p.decision.upgrade() {
+                        let _ = d.compare_exchange(
+                            0,
+                            ProcessDecision::Deny as u8,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        );
+                    }
+                }
+            }
+        }
+        accepted
+    }
+    pub(super) fn check_denied(&self, entry: &Path, helper: &str) -> Result<(), String> {
+        let key = DenialKey::new(
+            &entry.canonicalize().map_err(|e| e.to_string())?,
+            &super::super::paths::clean(helper)?,
+        );
+        self.check_key(&key)
+    }
+    fn check_key(&self, key: &DenialKey) -> Result<(), String> {
+        let denied = self.denied.lock().unwrap();
+        // Bound storage without forgetting a denial and allowing more prompts.
+        if denied.len() >= 256 || denied.contains(key) {
+            Err("native process request denied by the player for this session".into())
+        } else {
+            Ok(())
+        }
     }
     pub(super) fn authorize(&self, request: &StartRequest) -> Result<Authorization, String> {
         let folder = request
@@ -98,6 +174,7 @@ impl ProcessPermissions {
             .or_else(|| request.entry.parent())
             .ok_or("no plugin folder")?;
         let clean = super::super::paths::clean(&request.file)?;
+        self.check_denied(&request.entry, &clean)?;
         let grant = ProcessGrant::capture(&request.entry, folder, &[clean.clone()])?;
         // Capture validates the folder and helper type. Resolve the helper again to reject
         // entry/helper changes between snapshot and publishing the request.
@@ -106,9 +183,8 @@ impl ProcessPermissions {
             ..Default::default()
         }
         .helper(&request.entry, request.folder.as_deref(), &clean)?;
-        if self.denied.lock().unwrap().contains(&grant) {
-            return Err("native process request denied by the player for this session".into());
-        }
+        let key = DenialKey::grant(&grant);
+        self.check_key(&key)?;
         let mut saved = self.saved.lock().unwrap();
         if !saved.loaded {
             saved.loaded = true;
@@ -128,6 +204,7 @@ impl ProcessPermissions {
         drop(saved);
         let decision = Arc::new(AtomicU8::new(0));
         let mut pending = self.pending.lock().unwrap();
+        self.check_key(&key)?;
         pending.retain(|p| {
             p.decision
                 .upgrade()
@@ -151,9 +228,10 @@ impl ProcessPermissions {
         Ok(Authorization::Pending(grant, decision))
     }
     pub(super) fn deny(&self, grant: ProcessGrant) {
+        let key = DenialKey::grant(&grant);
         let mut denied = self.denied.lock().unwrap();
-        if !denied.contains(&grant) && denied.len() < 256 {
-            denied.push(grant.clone());
+        if denied.len() < 256 {
+            denied.insert(key.clone());
         }
         drop(denied);
         for pending in self
@@ -161,7 +239,7 @@ impl ProcessPermissions {
             .lock()
             .unwrap()
             .iter()
-            .filter(|p| p.grant == grant)
+            .filter(|p| DenialKey::grant(&p.grant) == key)
         {
             if let Some(d) = pending.decision.upgrade() {
                 let _ = d.compare_exchange(

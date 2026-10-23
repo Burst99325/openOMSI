@@ -164,7 +164,81 @@ fn once_waits_without_blocking_frames_then_prompts_again_and_deny_stays_denied()
     assert!(game.messages[0].contains("denied"));
     assert!(broker.prompt().is_none());
     host.finalize();
+    // Denial is about this entry/helper for the session, not the current hashes.
+    let entry = f.folder.join("a_plugin.lua");
+    let source = std::fs::read_to_string(&entry).unwrap();
+    std::fs::write(&entry, format!("{source}\n-- content changed after denial\n")).unwrap();
+    std::fs::write(f.folder.join("a_plugin.save.lua"), "return { counter = 2 }").unwrap();
+    std::fs::write(f.folder.join(if cfg!(windows) { "helper.exe" } else { "helper" }), "changed helper").unwrap();
+    let mut host = f.load(broker.clone());
+    let mut game = Game::default();
+    drive(&mut host, &mut game, |g| !g.messages.is_empty());
+    assert!(game.messages[0].contains("denied"));
+    assert!(broker.prompt().is_none());
+    assert!(!f.marker.exists());
+    host.finalize();
     std::fs::remove_dir_all(f.root).unwrap();
+}
+
+#[test]
+fn saving_plugin_data_while_awaiting_consent_and_after_restart_preserves_approval() {
+    for folder_plugin in [false, true] {
+        let f = Fixture::new();
+        let old_entry = f.folder.join("a_plugin.lua");
+        let source = std::fs::read_to_string(&old_entry).unwrap();
+        let folder = if folder_plugin {
+            let folder = f.folder.join("a_plugin");
+            std::fs::create_dir(&folder).unwrap();
+            let helper = if cfg!(windows) { "helper.exe" } else { "helper" };
+            std::fs::copy(f.folder.join(helper), folder.join(helper)).unwrap();
+            std::fs::remove_file(&old_entry).unwrap();
+            folder
+        } else { f.folder.clone() };
+        let entry = folder.join(if folder_plugin { "main.lua" } else { "a_plugin.lua" });
+        // Keep ordinary frame callbacks alive while native preparation/consent is pending.
+        let start = source.split("local code, state, reason").next().unwrap();
+        let source = format!(r#"
+            {start}
+            local done = false
+            function on_frame()
+                if done then return end
+                omsi.data.counter = (omsi.data.counter or 0) + 1
+                omsi.save()
+                assert(omsi.files.write("state.txt", tostring(omsi.data.counter)))
+                omsi.storage.set("counter", omsi.data.counter)
+                omsi.storage.save()
+                local code, state, reason = omsi.process.exit_code(handle)
+                if state == "exited" or state == "failed" then
+                    done = true
+                    omsi.message(state .. ":" .. tostring(code) .. ":" .. tostring(reason))
+                    assert(omsi.process.forget(handle))
+                end
+            end
+        "#);
+        std::fs::write(entry, source).unwrap();
+        let broker = f.broker();
+        let mut host = f.load(broker.clone());
+        let mut game = Game::default();
+        let p = prompt(&mut host, &mut game, &broker);
+        // The snapshot has been captured. Save real omsi.data/storage/files repeatedly.
+        for _ in 0..16 { host.frame(&mut game); }
+        assert!(!f.marker.exists());
+        assert!(broker.respond(p.id, ProcessDecision::AlwaysAllow));
+        drive(&mut host, &mut game, |g| !g.messages.is_empty());
+        assert_eq!(game.messages, ["exited:42:nil"]);
+        host.finalize();
+        std::fs::remove_file(&f.marker).unwrap();
+        // Another plugin saves too, in the same shared plugins directory.
+        std::fs::write(f.folder.join("z_other.save.lua"), "return { changed = true }").unwrap();
+        let broker = f.broker();
+        let mut host = f.load(broker.clone());
+        let mut game = Game::default();
+        drive(&mut host, &mut game, |g| !g.messages.is_empty());
+        assert_eq!(game.messages, ["exited:42:nil"]);
+        assert!(broker.prompt().is_none());
+        host.finalize();
+        std::fs::remove_dir_all(f.root).unwrap();
+    }
 }
 #[test]
 fn always_survives_restart_but_changes_reprompt_and_cannot_race_approval() {

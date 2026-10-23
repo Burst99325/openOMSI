@@ -1,4 +1,7 @@
 mod grants;
+mod content;
+#[cfg(test)]
+mod lifetime_tests;
 mod worker;
 mod permissions;
 pub use permissions::{ProcessDecision, ProcessPermissions, ProcessPrompt};
@@ -31,7 +34,8 @@ pub struct Status {
 }
 
 impl Processes {
-    pub fn start(
+    #[cfg(test)]
+    pub(crate) fn start(
         &mut self,
         file: &str,
         args: &[String],
