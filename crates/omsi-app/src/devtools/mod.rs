@@ -12,6 +12,8 @@
 //!   `[passengercabin]`, sound.cfg, the `.bus` (physics, cameras, mirrors, box), model.cfg
 //!   (its animations and lights, as long as its meshes stay) and the constfiles (while
 //!   the scripts and their variables stay) - and the game's log opened.
+//! * **Texttextures**: live font, dimensions, colours and alignment; the string variable
+//!   stays bound, and the edited model block can be copied without changing files.
 //!
 //! It lives in the game rather than in a window of its own: it shows the bus where it is
 //! and draws with the game's interface (`shell`). Closed it is gone - nothing of it is
@@ -20,6 +22,7 @@
 mod overlay;
 mod panel;
 mod reload;
+mod texttextures;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -47,6 +50,8 @@ pub(crate) enum Request {
     Reload(Kind),
     OpenLog,
     CopyMirror(usize),
+    ApplyTextTexture(usize, usize, omsi_model::TextTexture),
+    CopyTextTexture(usize, usize),
     Close,
 }
 
@@ -61,6 +66,7 @@ pub(crate) struct DevTools {
     pub edit: String,
     pub overlays: overlay::Overlays,
     pub mirror: usize,
+    texttextures: texttextures::Editor,
     /// The bus the watch list and the files are of.
     pub bus: PathBuf,
     /// The files of each part of the bus the overlays show (front first).
@@ -117,6 +123,7 @@ impl DevTools {
             edit: String::new(),
             overlays: Default::default(),
             mirror: 0,
+            texttextures: Default::default(),
             bus,
             parts: Vec::new(),
             files: Vec::new(),
@@ -352,9 +359,12 @@ impl App {
                 }
                 overlay::draw(&mut self.shell.ui, &screen, &d.overlays, &parts, &|n| v.var(n));
             }
+            if d.tab == 4 && d.texttextures.fonts.is_none() {
+                d.texttextures.fonts = self.world.as_ref().map(|w| w.fonts.lock().names());
+            }
             let out = panel::draw(&mut self.shell.ui, d, self.player.as_mut(), size);
-            // (the text fields are on the variables' page: on another one nothing types)
-            if d.tab != 0 {
+            // Only the variables and texttexture pages have editable text fields.
+            if d.tab != 0 && d.tab != 4 {
                 self.shell.ui.focus = None;
             }
             out
@@ -368,6 +378,17 @@ impl App {
     fn devtools_request(&mut self, r: Request) {
         match r {
             Request::Reload(kind) => self.devtools_reload(kind),
+            Request::ApplyTextTexture(part, id, def) => self.devtools_edit_texttexture(part, id, def),
+            Request::CopyTextTexture(part, id) => {
+                if let Some(def) = self.player.as_ref().and_then(|p| texttextures::definition(p, part, id)) {
+                    let block = texttextures::block(def);
+                    let copied = copy_text(&block);
+                    log::info!("developer tools: texttexture {part}/{id}:\n{block}");
+                    if let Some(d) = self.devtools.as_mut() {
+                        d.say(if copied { "Texttexture block copied" } else { "Texttexture block written to the log" });
+                    }
+                }
+            }
             Request::OpenLog => {
                 let log = omsi_launcher_lib::data_dir().join("game.log");
                 open_file(&log);

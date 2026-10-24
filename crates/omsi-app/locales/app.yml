@@ -92481,3 +92481,48 @@ _version: 2
   vi: "Xe này không có công tắc bộ tiếp điện"
   zh: "此车辆没有受电弓开关"
   zh-tw: "此車輛沒有集電弓開關"
+
+"Texttextures":
+  hu: "Szövegtextúrák"
+
+"This vehicle has no texttextures":
+  hu: "Ennek a járműnek nincsenek szövegtextúrái"
+
+"Width (pixels)":
+  hu: "Szélesség (pixel)"
+
+"Height (pixels)":
+  hu: "Magasság (pixel)"
+
+"Red (0–255)":
+  hu: "Piros (0–255)"
+
+"Green (0–255)":
+  hu: "Zöld (0–255)"
+
+"Blue (0–255)":
+  hu: "Kék (0–255)"
+
+"Pixel grid":
+  hu: "Pixelrács"
+
+"Use font colours":
+  hu: "A font színeinek használata"
+
+"Centred (rounded)":
+  hu: "Középen (kerekítve)"
+
+"Centred (round down)":
+  hu: "Középen (lefelé kerekítve)"
+
+"Centred (round up)":
+  hu: "Középen (felfelé kerekítve)"
+
+"Invalid values: size 1–4096, colour 0–255, grid 0–4096":
+  hu: "Hibás értékek: méret 1–4096, szín 0–255, rács 0–4096"
+
+"Live preview only. Reload model.cfg to restore the file.":
+  hu: "Csak élő előnézet. Visszaállítás: model.cfg újratöltése."
+
+"model.cfg (animations, lights, texttextures)":
+  hu: "model.cfg (animációk, fények, szövegtextúrák)"

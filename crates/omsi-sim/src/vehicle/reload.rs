@@ -97,13 +97,21 @@ impl VehicleInstance {
 
     /// model.cfg read again, softly: taken over only when it names the same meshes in the
     /// same order (the meshes on the graphics card stay), with its animations, visibility
-    /// variables and lights. Anything else waits for the bus to be placed anew.
+    /// variables, lights and texttexture definitions. A new font must be resolved by
+    /// the host's font library; the view updates texture sizes and material bindings.
+    /// Other material/mesh changes wait for the bus to be placed anew.
     pub fn reload_model(&mut self, model: Model) -> Result<(), String> {
         let files = |m: &Model| m.meshes.iter().map(|d| d.file.to_ascii_lowercase()).collect::<Vec<_>>();
         if files(&model) != files(&self.ty.model) {
             return Err("its meshes changed: place the bus anew to see them".into());
         }
         self.retyped(|ty| ty.model = model);
+        // Definitions are copied into the runtime state at spawn; replacing the model
+        // alone left dimensions, font and colour stuck at their original values.
+        self.text_textures = self.ty.model.text_textures.iter().map(|def| {
+            let atlas = self.text_textures.iter().find(|t| t.def.font.eq_ignore_ascii_case(&def.font)).and_then(|t| t.atlas.clone());
+            crate::texttex::TextTextureState::new(def.clone(), atlas)
+        }).collect();
         let ty = self.ty.clone();
         let program = ty.program.clone();
         let mut animators: Vec<MeshAnimator> = ty
@@ -151,6 +159,25 @@ impl VehicleInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_reload_replaces_text_definitions_and_redraws_unchanged_strings() {
+        let mut v = bus();
+        let old = omsi_model::TextTexture { variable: "display".into(), font: "Old".into(), width: 8, height: 4, ..Default::default() };
+        Arc::make_mut(&mut v.ty).model.text_textures = vec![old.clone()];
+        v.text_textures = vec![crate::texttex::TextTextureState::new(old.clone(), None)];
+        assert_eq!(v.update_text_textures(), [0]);
+        assert!(v.update_text_textures().is_empty());
+        let new = omsi_model::TextTexture { font: "New".into(), width: 16, height: 8, color: [12.0, 34.0, 56.0], orientation: 5, grid: 2, full_color: true, ..old };
+        let model = Model { text_textures: vec![new.clone(), new.clone()], ..Default::default() };
+        v.reload_model(model).unwrap();
+        assert_eq!(v.text_textures[0].def, new);
+        assert_eq!(v.update_text_textures(), [0, 1]);
+        assert_eq!(v.text_textures[0].pending.as_ref().unwrap().len(), 16 * 8 * 4);
+        assert!(v.update_text_textures().is_empty());
+        v.reload_model(Model::default()).unwrap();
+        assert!(v.text_textures.is_empty());
+    }
 
     fn bus() -> VehicleInstance {
         let mut def = Vehicle::default();

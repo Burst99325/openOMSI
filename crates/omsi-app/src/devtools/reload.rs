@@ -28,7 +28,7 @@ impl Kind {
         (Kind::Paths, "paths.cfg and passenger cabin"),
         (Kind::Sound, "sound.cfg"),
         (Kind::Bus, ".bus (physics, cameras, mirrors, box)"),
-        (Kind::Model, "model.cfg (animations, lights)"),
+        (Kind::Model, "model.cfg (animations, lights, texttextures)"),
         (Kind::Constfiles, "constfiles"),
     ];
 
@@ -107,6 +107,7 @@ impl App {
 
     /// Read `kind` of the player's bus's files again and give it to the bus.
     pub(crate) fn devtools_reload(&mut self, kind: Kind) {
+        let mut model_reloaded = false;
         let msg = match self.player.as_mut() {
             None => "no bus of one's own".to_string(),
             Some(p) => {
@@ -133,7 +134,7 @@ impl App {
                     Kind::Model => {
                         let def = &p.vehicle.ty.def;
                         match def.model.as_ref().map(|m| omsi_cfg::resolve_path(def.dir(), m)) {
-                            Some(path) => omsi_model::Model::load(&path).map_err(|e| e.to_string()).and_then(|m| p.vehicle.reload_model(m)).map(|()| "animations, lights and visibility taken over".to_string()),
+                            Some(path) => omsi_model::Model::load(&path).map_err(|e| e.to_string()).and_then(|m| p.vehicle.reload_model(m)).map(|()| { model_reloaded = true; "animations, lights, visibility and texttextures taken over".to_string() }),
                             None => Err("the bus has no model".to_string()),
                         }
                     }
@@ -151,6 +152,10 @@ impl App {
                 }
             }
         };
+        if model_reloaded {
+            self.devtools_reload_texttextures();
+            if let Some(d) = self.devtools.as_mut() { d.texttextures.reset(); }
+        }
         // (the overlays and the list of files follow what the bus has now)
         if let (Some(d), Some(p)) = (self.devtools.as_mut(), self.player.as_ref()) {
             if kind == Kind::Bus || kind == Kind::Paths {

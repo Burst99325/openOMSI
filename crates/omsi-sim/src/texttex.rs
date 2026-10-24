@@ -51,6 +51,14 @@ fn size_of(name: &str) -> Option<(u32, u32)> {
 }
 
 impl FontLibrary {
+    /// Installed font names for the developer tools, without decoding their bitmaps.
+    pub fn names(&mut self) -> Vec<String> {
+        let mut names: Vec<_> = self.index().iter().map(|f| f.name.trim().to_string()).filter(|n| !n.is_empty()).collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        names
+    }
+
     pub fn new(root: &Path) -> FontLibrary {
         FontLibrary { atlases: HashMap::new(), images: HashMap::new(), root: root.to_path_buf(), index: None, only_root: false }
     }
@@ -278,6 +286,18 @@ impl TextTextureState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_picker_lists_unique_installed_names_without_loading_images() {
+        let mut lib = FontLibrary::new(Path::new("fonts"));
+        lib.index = Some(["Zulu", "din", "DIN", "Arial", ""].iter().map(|n| bitmap_font(n, "fonts")).collect());
+        let names = lib.names();
+        assert_eq!(names.len(), 3);
+        assert_eq!(names[0], "Arial");
+        assert!(names[1].eq_ignore_ascii_case("DIN"));
+        assert_eq!(names[2], "Zulu");
+        assert!(lib.atlases.is_empty() && lib.images.is_empty());
+    }
 
     fn bitmap_font(name: &str, folder: &str) -> Font {
         Font {

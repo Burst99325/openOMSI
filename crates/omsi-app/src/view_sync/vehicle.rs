@@ -76,13 +76,14 @@ pub fn sync_vehicle_part(
         render,
     );
     sync_materials(renderer, scene, main, render);
+    let mut rebound = Vec::new();
     for i in part.update_text_textures(main) {
         if let (Some(Some(tex)), Some(img)) = (
             render.text_textures.get(i),
             part.text_textures[i].pending.take(),
         ) {
             let d = &part.text_textures[i].def;
-            renderer.update_texture_mips(
+            if renderer.update_texture_mips(
                 scene,
                 *tex,
                 &Image {
@@ -91,9 +92,10 @@ pub fn sync_vehicle_part(
                     rgba: img,
                     has_alpha: true,
                 },
-            );
+            ) { rebound.push(*tex); }
         }
     }
+    renderer.rebind_textures(scene, &rebound);
 }
 
 /// Resolve a vehicle `[matl_freetex]` name. OMSI add-ons often write paths such as
@@ -466,13 +468,14 @@ pub fn sync_vehicle_textures(
         |li| interior_lamp_on(&vehicle.ty, li, |n| vehicle.var(n)),
         render,
     );
+    let mut rebound = Vec::new();
     for i in vehicle.update_text_textures() {
         if let (Some(Some(tex)), Some(img)) = (
             render.text_textures.get(i),
             vehicle.text_textures[i].pending.take(),
         ) {
             let d = &vehicle.text_textures[i].def;
-            renderer.update_texture_mips(
+            if renderer.update_texture_mips(
                 scene,
                 *tex,
                 &Image {
@@ -481,10 +484,9 @@ pub fn sync_vehicle_textures(
                     rgba: img,
                     has_alpha: true,
                 },
-            );
+            ) { rebound.push(*tex); }
         }
     }
-    let mut rebound = Vec::new();
     for (i, st) in vehicle.host.script_textures.iter_mut().enumerate() {
         // (far away what the scripts redraw goes up every half second: `displays_far`)
         if !render.displays_far {

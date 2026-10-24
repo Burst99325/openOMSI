@@ -891,7 +891,7 @@ reach the other players' games.
 
 For those who build vehicles: **Ctrl+Shift+D** opens a panel at the right of the picture
 over the running game (again: closes it; closed it costs nothing). The game goes on under it;
-the mouse works the panel where it is over it and the cab everywhere else. Four pages:
+the mouse works the panel where it is over it and the cab everywhere else. Five pages:
 
 * **Variables**: the search lists the bus's script variables (`$` before the text: its string
   variables) with their values; a click puts one on the watch list at the top, which is kept
@@ -909,11 +909,19 @@ the mouse works the panel where it is over it and the cab everywhere else. Four 
 * **Files**: what changes in the bus's files is read again within a second while the panel
   is open (or on its button): paths.cfg and `[passengercabin]` (not while people are aboard
   and places, doors or points would go), sound.cfg, the `.bus` (physics, cameras, mirrors,
-  bounding box; not when its axles change), model.cfg (animations, visibility and lights, as
+  bounding box; not when its axles change), model.cfg (animations, visibility, lights and texttexture definitions, as
   long as it names the same meshes) and the constfiles (as long as the scripts and their
   variables stay). A changed script needs the bus placed anew. *Open the log* opens the
   game's log. Change a copy of a bus in your content folder, never the installation's own
   files.
+* **Texttextures**: choose the vehicle part and the zero-based texttexture ID. The installed
+  font dropdown, width, height, RGB colour, font-colour switch, orientation and pixel grid
+  change the live display. Its string-variable binding is shown read-only. Numeric input
+  is applied only when valid (size 1–4096 pixels, RGB 0–255, grid 0–4096). **Copy the block**
+  copies a `[texttexture_enh]` definition to paste into model.cfg; the editor does not write
+  vehicle files. Reading model.cfg again restores its definitions, including coupled
+  parts' texttextures, and redraws even unchanged strings. As with the existing soft model
+  reload, changes to meshes and material bindings still require placing the bus anew.
 
 ## Mirror panels
 

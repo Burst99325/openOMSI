@@ -10,7 +10,7 @@ use omsi_ui::theme::*;
 use omsi_ui::kit::{ButtonKind, Ui};
 use crate::player::Player;
 
-pub(crate) const TABS: [&str; 4] = ["Variables", "Overlays", "Mirrors", "Files"];
+pub(crate) const TABS: [&str; 5] = ["Variables", "Overlays", "Mirrors", "Files", "Texttextures"];
 
 const WIDTH: f32 = 400.0;
 const LINE: f32 = 26.0;
@@ -30,13 +30,14 @@ pub(crate) fn draw(ui: &mut Ui, d: &mut DevTools, mut p: Option<&mut Player>, si
     let bus = p.as_ref().map(|p| p.vehicle.ty.def.path.file_name().unwrap_or_default().to_string_lossy().to_string()).unwrap_or_else(|| omsi_ui::tr("no bus of one's own").into_owned());
     ui.text_in(&bus, Rect::new(inner.x, inner.y + 24.0, inner.w, 18.0), 12.0, Weight::Regular, TEXT_DIM, Align::Left);
     let tabs = TABS.map(|tab| omsi_ui::tr(tab).into_owned());
-    let tab_labels = tabs.iter().map(|tab| tab.as_str()).collect::<Vec<_>>();
-    ui.segmented("dt-tabs", Rect::new(inner.x, inner.y + 48.0, inner.w, 30.0), &mut d.tab, &tab_labels);
+    // Five page labels no longer fit side by side on the narrow developer panel.
+    ui.select("dt-tabs", Rect::new(inner.x, inner.y + 48.0, inner.w, 30.0), &mut d.tab, &tabs);
     let body = Rect::new(inner.x, inner.y + 90.0, inner.w, inner.h - 90.0);
     match d.tab {
         0 => variables(ui, d, p.as_deref_mut(), body),
         1 => overlays(ui, d, body),
         2 => mirrors(ui, d, p.as_deref_mut(), body, &mut out),
+        4 => super::texttextures::draw(ui, &mut d.texttextures, p.as_deref(), body, &mut out),
         _ => files(ui, d, body, &mut out),
     }
     out
